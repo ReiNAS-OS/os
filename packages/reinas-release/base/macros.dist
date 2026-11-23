@@ -1,0 +1,32 @@
+# ReiNAS dist macros.
+#
+# 本文件基于 Fedora 44 的 /usr/lib/rpm/macros.d/macros.dist，
+# 改动仅限于「身份」相关的几行。
+#
+# ⚠️⚠️ 绝对不能改的四行 ⚠️⚠️
+#     %fedora / %fc44 / %distcore / %dist
+#
+# 原因：Fedora 仓库里每个包都叫 foo-1.2-3.fc44.x86_64，
+# 它们的依赖关系写的也是 .fc44。把 %dist 改成 .reinas44 会让
+# 「整个 Fedora 仓库的依赖解析全部断裂」。
+#
+# 反过来这也是好处：换到 Fedora 45 时只需 %fedora 变成 45，
+# 所有自建包的 .fc45 后缀自动跟上，无需改任何 spec。
+
+%__bootstrap         ~bootstrap
+%fedora              44
+%fc44                1
+%distcore            .fc%{fedora}
+%dist                %{!?distprefix0:%{?distprefix}}%{expand:%{lua:for i=0,9999 do print("%{?distprefix" .. i .."}") end}}%{distcore}%{?with_bootstrap:%{__bootstrap}}%{?buildrelease:+build%{buildrelease}}
+
+# --- 以下为 ReiNAS 身份，与 Fedora 不同 ---
+%dist_vendor         ReiNAS
+%dist_name           ReiNAS
+%dist_purl_namespace reinas
+%dist_home_url       https://github.com/mouyase
+%dist_bug_report_url https://github.com/mouyase
+
+# 保持指向 Fedora 的 debuginfod 不变：
+# 我们的包全部来自 Fedora 仓库，调试符号也在那边。
+# 改掉会让 gdb / perf 找不到 debuginfo。
+%dist_debuginfod_url ima:enforcing https://debuginfod.fedoraproject.org/ ima:ignore

@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ReiNAS OS — KIWI 镜像描述
+
+  一次 oem 类型构建同时产出两个制品：
+    ReiNAS.x86_64-<ver>.raw           dd 到磁盘直接可启动（自动扩盘）
+    ReiNAS.x86_64-<ver>.install.iso   装机盘（把 raw 部署到目标盘）
+
+  ============================ 为什么是 oem ============================
+  kiwi 的 image 类型里只有 oem 同时支持 installiso，且 oem 自带
+  首次启动扩盘（dracut-kiwi-oem-repart）。对 NAS 来说这两点都是刚需：
+  同一份 raw 能 dd 到 128G 的 SSD，也能 dd 到 8T 的 HDD，首启自动撑满。
+
+  ============================ Secure Boot ============================
+  shim-x64 / grub2-efi-x64 / kernel-core 全部用 Fedora 已签名的原件，
+  所以签名链在 Microsoft 证书下天然有效，不需要自己签。
+  ⚠️ 一旦你替换内核为自编译版本，这条链就断了（见 docs/decisions.md）。
+-->
+<image schemaversion="7.4" name="ReiNAS">
+
+  <description type="system">
+    <author>ReiNAS</author>
+    <contact>https://github.com/ReiNAS-OS</contact>
+    <specification>ReiNAS OS — 面向自建存储的 Fedora 衍生发行版</specification>
+  </description>
+
+  <profiles>
+    <profile name="Disk" description="系统盘镜像（.raw + .install.iso）"/>
+  </profiles>
+
+  <preferences>
+    <!--
+      version 是产物文件名的一部分；release-version 决定 $releasever，
+      必须是 Fedora 的主版本号，否则 metalink 里的 repo=fedora-$releasever 会 404。
+      ⚠️ 单独的 <version>0.1.0</version> 会让 dnf 误判 $releasever，
+         所以这里交给 reinas-release 包提供的 system-release(releasever) 兜底，
+         见 packages/reinas-release.spec。
+    -->
+    <version>0.1.0</version>
+    <packagemanager>dnf5</packagemanager>
+    <locale>en_US</locale>
+    <keytable>us</keytable>
+    <timezone>Asia/Shanghai</timezone>
+    <release-version>45</release-version>
+  </preferences>
+
+  <preferences profiles="Disk" arch="x86_64">
+    <!--
+      filesystem=btrfs + 子卷：NAS 上快照/回滚是核心能力，不做成可选。
+      bootpartition=true：/boot 单独 ext4，避免 btrfs 早期引导的复杂度。
+      efipartsize=512：够放 shim + grub + 多份内核。
+      oem-resize=true：首启把最后一个分区撑满整盘（dd 到不同容量磁盘的关键）。
+    -->
+    <type image="oem"
+          filesystem="btrfs"
+          btrfs_root_is_subvolume="true"
+          btrfs_set_default_volume="false"
+          fsmountoptions="compress=zstd:1,noatime"
+          kernelcmdline="quiet console=tty0 console=ttyS0,115200n8"
+          devicepersistency="by-uuid"
+          bootpartition="true"
+          bootpartsize="1024"
+          bootfilesystem="ext4"
+          efipartsize="512"
+          firmware="uefi"
+          rootfs_label="REINAS_OS"
+          volid="REINAS_OS"
+          installiso="true"
+          installstick="true">
+      <bootloader name="grub2" bls="true" console="console" timeout="5"/>
+      <!-- 基础盘 8G，首启自动扩展到目标盘全容量 -->
+      <size unit="G">8</size>
+      <systemdisk name="reinas">
+        <volume name="@root=root"/>
+        <volume name="home" parent="/"/>
+        <volume name="var" parent="/"/>
+        <volume name="srv" parent="/"/>
+      </systemdisk>
+      <oemconfig>
+        <oem-resize>true</oem-resize>
+        <oem-swap>false</oem-swap>
+      </oemconfig>
+    </type>
+  </preferences>
+
+  <preferences profiles="Disk" arch="aarch64">
+    <type image="oem"
+          filesystem="btrfs"
+          btrfs_root_is_subvolume="true"
+          btrfs_set_default_volume="false"
+          fsmountoptions="compress=zstd:1,noatime"
+          kernelcmdline="quiet console=ttyAMA0,115200n8"
+          devicepersistency="by-uuid"
+          bootpartition="true"
+          bootpartsize="1024"
+          bootfilesystem="ext4"
+          efipartsize="512"
+          firmware="uefi"
+          rootfs_label="REINAS_OS"
+          volid="REINAS_OS"
+          installiso="true">
+      <bootloader name="grub2" bls="true" console="serial" timeout="5"/>
+      <size unit="G">8</size>
+      <systemdisk name="reinas">
+        <volume name="@root=root"/>
+        <volume name="home" parent="/"/>
+        <volume name="var" parent="/"/>
+        <volume name="srv" parent="/"/>
+      </systemdisk>
+      <oemconfig>
+        <oem-resize>true</oem-resize>
+        <oem-swap>false</oem-swap>
+      </oemconfig>
+    </type>
+  </preferences>
+
+  <!-- ============================ 仓库 ============================ -->
+  <repository type="rpm-md" alias="fedora" priority="99" sourcetype="metalink">
+    <source path="https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&amp;arch=$basearch"/>
+  </repository>
+  <repository type="rpm-md" alias="updates" priority="99" sourcetype="metalink">
+    <source path="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&amp;arch=$basearch"/>
+  </repository>
+  <!--
+    自建包仓库：build.sh 会先编译 reinas-release 丢进 rpms/ 并 createrepo，再挂进来。
+    ⚠️ 不要写 priority 属性：kiwi 会因此给 dnf 传 disable-plugin 参数
+       （priorities 和 versionlock 两个），而 Fedora 的 dnf5 没有这两个插件，
+       直接报 "No matches were found for the following plugin name patterns"。
+    也不需要 repo_gpgcheck：本地仓库没有签名，开了反而失败。
+  -->
+  <repository type="rpm-md" alias="reinas">
+    <source path="this://./rpms"/>
+  </repository>
+
+  <!-- ============================ 引导 ============================ -->
+  <packages type="bootstrap" patternType="onlyRequired">
+    <package name="filesystem"/>
+    <package name="glibc-minimal-langpack"/>
+  </packages>
+
+  <!--
+    ⚠️ patternType="onlyRequired" 是这里最关键的属性，不要删。
+    默认值 plusRecommended 会让 dnf 把每个包的「推荐依赖」也一起装，
+    实测会拖进来 qemu / spice-server / gstreamer1-plugins / pipewire /
+    pacman / syslinux 这些 NAS 上完全用不到的东西（720 个包 vs 需要的 ~400）。
+    onlyRequired 只装硬依赖。
+  -->
+  <packages type="image" patternType="onlyRequired">
+    <!-- 内核与引导：全部用 Fedora 签名件，保 Secure Boot 链 -->
+    <package name="kernel"/>
+    <package name="kernel-core"/>
+    <package name="kernel-modules"/>
+    <package name="kernel-modules-extra"/>
+    <package name="shim-x64" arch="x86_64"/>
+    <package name="grub2-efi-x64" arch="x86_64"/>
+    <package name="grub2-efi-x64-modules" arch="x86_64"/>
+    <package name="grub2-tools"/>
+    <package name="grub2-tools-minimal"/>
+    <package name="efibootmgr"/>
+    <package name="dracut"/>
+    <package name="dracut-config-generic"/>
+
+    <!-- kiwi 的 OEM 运行时：扩盘 + install.iso 部署 -->
+    <package name="dracut-kiwi-oem-repart"/>
+    <package name="dracut-kiwi-oem-dump"/>
+    <package name="dracut-kiwi-lib"/>
+
+    <!-- 文件系统工具 -->
+    <package name="btrfs-progs"/>
+    <package name="e2fsprogs"/>
+    <package name="dosfstools"/>
+    <package name="xfsprogs"/>
+    <package name="lvm2"/>
+    <package name="mdadm"/>
+    <package name="smartmontools"/>
+    <package name="nvme-cli"/>
+    <package name="util-linux"/>
+    <package name="parted"/>
+    <package name="gdisk"/>
+
+    <!-- 网络 -->
+    <package name="NetworkManager"/>
+    <package name="NetworkManager-bluetooth"/>
+    <package name="iproute"/>
+    <package name="iputils"/>
+    <package name="dhcp-client"/>
+    <package name="chrony"/>
+    <package name="openssh-server"/>
+    <package name="firewalld"/>
+
+    <!-- 存储共享（NAS 本体） -->
+    <package name="samba"/>
+    <package name="samba-client"/>
+    <package name="nfs-utils"/>
+    <package name="nfs4-acl-tools"/>
+    <package name="rsync"/>
+
+    <!-- 管理面 -->
+    <package name="cockpit"/>
+    <package name="cockpit-storaged"/>
+    <package name="cockpit-networkmanager"/>
+    <package name="cockpit-podman"/>
+    <package name="cockpit-selinux"/>
+    <package name="cockpit-packagekit"/>
+    <package name="udisks2"/>
+    <package name="udisks2-btrfs"/>
+    <package name="podman"/>
+
+    <!-- 系统基础 -->
+    <package name="dnf5"/>
+    <package name="dnf5-plugins"/>
+    <package name="systemd"/>
+    <package name="systemd-oomd-defaults"/>
+    <package name="systemd-resolved"/>
+    <package name="selinux-policy-targeted"/>
+    <package name="policycoreutils"/>
+    <package name="policycoreutils-python-utils"/>
+    <package name="crypto-policies"/>
+    <package name="ca-certificates"/>
+    <package name="sudo"/>
+    <package name="shadow-utils"/>
+    <package name="kbd"/>
+    <package name="kbd-misc"/>
+    <package name="tzdata"/>
+    <package name="vim-enhanced"/>
+    <package name="tmux"/>
+    <package name="htop"/>
+    <package name="curl"/>
+    <package name="wget2-wget"/>
+    <package name="tar"/>
+    <package name="xz"/>
+    <package name="zstd"/>
+    <package name="which"/>
+    <package name="findutils"/>
+    <package name="hostname"/>
+    <package name="acl"/>
+    <package name="attr"/>
+    <!--
+      语言包：只留英文。
+      ⚠️ 绝不要装 glibc-all-langpacks —— 它把全部 locale 塞进镜像，
+         实测单包 227 MiB，占了显式包体积的三分之一。
+         需要中文时再加 glibc-langpack-zh（约 3 MiB），不要回头动 all-langpacks。
+    -->
+    <package name="langpacks-en"/>
+    <package name="glibc-langpack-en"/>
+
+    <!-- 自建包 -->
+    <package name="reinas-release"/>
+  </packages>
+
+  <packages type="uninstall">
+    <!-- 服务器不需要的东西，减小攻击面与体积 -->
+    <package name="iwl*"/>
+    <package name="ipw*"/>
+    <package name="NetworkManager-wifi"/>
+    <package name="wpa_supplicant"/>
+    <package name="bluez"/>
+    <package name="firewalld-config-workstation"/>
+    <package name="plymouth-theme-*"/>
+  </packages>
+
+  <packages type="delete">
+    <!-- 明确从镜像里删掉的文件 -->
+    <file name="/etc/machine-id"/>
+    <file name="/var/lib/systemd/random-seed"/>
+  </packages>
+</image>

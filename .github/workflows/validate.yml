@@ -1,0 +1,101 @@
+name: validate
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # kiwi 描述里的四类坑都在这一个脚本里查：
+      # 注释中的连续减号（XML 规范禁止）、未转义的 &、locale 后缀、
+      # 以及 patternType 是否设成 onlyRequired。
+      - name: 校验 kiwi 描述
+        run: python3 scripts/check-xml.py kiwi/reinas.kiwi
+
+      - name: 校验 reinas-release.spec 注释里没有百分号
+        run: |
+          # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。
+          python3 - <<'PY'
+          import sys
+          bad = [
+              (i, l) for i, l in enumerate(
+                  open('packages/reinas-release/reinas-release.spec').read().split('\n'), 1
+              )
+              if l.strip().startswith('#') and '%' in l
+          ]
+          if bad:
+              for i, l in bad:
+                  print(f"  ✗ line {i}: {l.strip()[:80]}")
+              print("spec 注释里不能出现百分号")
+              sys.exit(1)
+          print("  ✓ 通过")
+          PY
+
+      - name: 校验 reinas-update 可执行
+        run: |
+          python3 -m py_compile packages/reinas-release/files/reinas-update
+          echo "  ✓ 语法通过"
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning scripts/*.sh kiwi/config.sh .docker/*.sh
+
+      - name: bash 语法
+        run: |
+          for f in scripts/*.sh kiwi/config.sh .docker/*.sh; do
+            bash -n "$f" && echo "  ✓ $f"
+          done
+
+      - name: 确认包名在 Fedora 中真实存在
+        run: |
+          # 防止把拼错的包名写进描述里——那会在构建的最后一步才暴露。
+          python3 - <<'PY'
+          import re, sys, urllib.request, zlib, xml.etree.ElementTree as ET
+
+          URL = ("https://mirrors.kernel.org/fedora/releases/45/Everything/"
+                 "x86_64/os/repodata/repomd.xml")
+          print("拉取 Fedora 45 元数据...")
+          repomd = urllib.request.urlopen(URL, timeout=120).read().decode()
+          href = re.search(r'href="([^"]*primary\.xml\.(?:gz|zst))"', repomd).group(1)
+          base = URL.rsplit("/repodata/", 1)[0]
+          raw = urllib.request.urlopen(f"{base}/{href}", timeout=300).read()
+
+          if href.endswith(".zst"):
+              try:
+                  import zstandard as zstd
+                  data = zstd.ZstdDecompressor().decompress(raw, max_output_size=300_000_000)
+              except ImportError:
+                  print("  ! 缺 zstandard，跳过此检查")
+                  sys.exit(0)
+          else:
+              data = zlib.decompress(raw, 16 + zlib.MAX_WBITS)
+
+          known = set()
+          for m in re.finditer(rb'<package type="rpm">(.*?)</package>', data, re.S):
+              b = m.group(1)
+              n = re.search(rb'<name>(.*?)</name>', b).group(1).decode()
+              a = re.search(rb'<arch>(.*?)</arch>', b).group(1).decode()
+              if a in ("x86_64", "noarch"):
+                  known.add(n)
+
+          root = ET.parse("kiwi/reinas.kiwi").getroot()
+          want = [p.get("name") for p in root.findall('.//packages[@type="image"]/package')]
+          missing = [
+              p for p in want
+              if p not in known and not any(c in p for c in "*?[")
+              and p != "reinas-release"          # 自建包
+          ]
+          print(f"  检查 {len(want)} 个包名，Fedora 45 中未知的有 {len(missing)} 个")
+          if missing:
+              for p in missing:
+                  print(f"  ✗ {p}")
+              sys.exit(1)
+          print("  ✓ 全部存在")
+          PY

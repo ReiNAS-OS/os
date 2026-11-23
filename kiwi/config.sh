@@ -1,0 +1,195 @@
+#!/bin/bash
+#
+# ReiNAS OS — kiwi 镜像内配置脚本
+#
+# 由 kiwi 在 chroot 里以 root 执行，位置是镜像的 /。
+# 全部命令必须幂等：kiwi 可能在 create 阶段重跑。
+#
+# 与 Fedora 官方 config.sh 的关系：
+#   结构参考 https://forge.fedoraproject.org/releng/kiwi-descriptions (f45)
+#   但去掉所有 vagrant / cloud / desktop 分支，只留 NAS 需要的。
+#
+# shellcheck disable=SC2154  # kiwi_iname / kiwi_profiles 由 kiwi 在构建时注入
+set -euo pipefail
+
+echo "==== ReiNAS config.sh: [$kiwi_iname] profile=[$kiwi_profiles] ===="
+
+# ============================================================
+#  1. 清掉机器相关状态，保证一镜像多机部署
+# ============================================================
+# machine-id 必须清空：同一个 UUID 在网络上出现两次，systemd 会拒绝启动
+# journald 和 networkd，而且 DHCP 会冲突。
+rm -f /etc/machine-id
+touch /etc/machine-id          # 空文件 = 首次启动时由 systemd 生成
+rm -f /var/lib/systemd/random-seed
+
+# cloud-init / NetworkManager 的持久化连接不应进镜像
+rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
+
+# ============================================================
+#  2. dnf 身份：让 $releasever 永远是 Fedora 主版本号
+# ============================================================
+# reinas-release 包已经装了 /etc/dnf/vars/releasever，这里再确认一次，
+# 防止某些 dnf5 版本优先读 os-release 的 VERSION_ID（=0.1.0）。
+echo "45" > /etc/dnf/vars/releasever
+
+# ============================================================
+#  3. 引导：GRUB 行为对齐 Fedora 官方安装
+# ============================================================
+cat >> /etc/default/grub <<'EOF'
+GRUB_DEFAULT=saved
+GRUB_DISABLE_SUBMENU=true
+GRUB_DISABLE_RECOVERY=true
+EOF
+
+mkdir -p /boot/grub2
+[ -f /boot/grub2/grubenv ] || grub2-editenv /boot/grub2/grubenv create
+# menu_auto_hide=1：无异常时跳过菜单直接启动（NAS 不该卡在菜单等人按）
+grub2-editenv /boot/grub2/grubenv set menu_auto_hide=1 boot_indeterminate=1
+
+# ============================================================
+#  4. 首启扩盘
+# ============================================================
+# kiwi 的 dracut-kiwi-oem-repart 在 initramfs 阶段做分区扩展，
+# systemd-repart 在这里兜底处理文件系统层的 grow。
+mkdir -p /etc/repart.d
+cat > /etc/repart.d/50-root.conf <<'EOF'
+[Partition]
+Type=root
+EOF
+
+# ============================================================
+#  5. 账号
+# ============================================================
+# root 锁定密码（禁止密码登录），但保留账号可用：
+#   - 物理控制台可用单用户模式
+#   - 首次登录通过 cockpit 或 ssh key
+#   - 初始管理员由后续的 Web 首启向导创建
+passwd -d root 2>/dev/null || true
+passwd -l root 2>/dev/null || true
+
+# 应急账号：锁定状态、在 wheel 组，供控制台与后续设密码使用
+if ! id reinas >/dev/null 2>&1; then
+    useradd -m -G wheel -s /bin/bash reinas
+fi
+passwd -l reinas 2>/dev/null || true
+
+# ============================================================
+#  6. 服务默认状态
+# ============================================================
+systemctl enable sshd.service
+systemctl enable chronyd.service
+systemctl enable firewalld.service
+systemctl enable cockpit.socket
+systemctl enable NetworkManager.service
+systemctl enable fstrim.timer
+systemctl enable systemd-timesyncd.service 2>/dev/null || true
+
+# NAS 核心：smb / nfs 不默认启用，等用户在面板里配好共享再开
+systemctl disable smb.service  2>/dev/null || true
+systemctl disable nmb.service  2>/dev/null || true
+systemctl disable nfs-server.service 2>/dev/null || true
+
+# 明确关掉不需要的
+systemctl disable bluetooth.service 2>/dev/null || true
+systemctl disable ModemManager.service 2>/dev/null || true
+systemctl disable debug-shell.service 2>/dev/null || true
+
+# 目标：无图形界面（NAS 不该跑 display-manager）
+systemctl set-default multi-user.target
+
+# ============================================================
+#  7. 安全基线
+# ============================================================
+# SELinux 必须保持 enforcing。kiwi 构建时若改过文件上下文，首启自动重标签。
+/usr/sbin/selinuxenabled 2>/dev/null && echo "SELinux: enforcing (ok)" || true
+touch /.autorelabel 2>/dev/null || true
+
+# sshd 加固
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/10-reinas.conf <<'EOF'
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UseDNS no
+ClientAliveInterval 60
+EOF
+
+# ============================================================
+#  8. 防火墙：只开管理端口和 NAS 端口
+# ============================================================
+firewall-offline-cmd --zone=public --add-service=ssh        >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-service=cockpit    >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-service=samba      >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-service=nfs        >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-service=mountd     >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || true
+
+# ============================================================
+#  9. 登录前提示（管理面板地址）
+# ============================================================
+install -d /usr/lib/reinas
+cat > /usr/lib/reinas/reinas-issue-update <<'EOF'
+#!/bin/bash
+# 把管理面板地址写到 /etc/issue.d/，agetty 每次打印登录提示都会重读。
+# 注意：内核控制台字体装不下 CJK，这里必须全英文。
+set -u
+OUT=/etc/issue.d/10-reinas.issue
+mkdir -p /etc/issue.d
+ip=$(ip -4 -o addr show scope global 2>/dev/null \
+     | awk '$2 !~ /^(docker|veth|br-|virbr|tun|wg)/ {print $4; exit}' \
+     | cut -d/ -f1)
+{
+  echo
+  if [ -n "${ip:-}" ]; then
+    echo "  ReiNAS management:  https://${ip}:9090"
+  else
+    echo "  ReiNAS management:  waiting for network..."
+  fi
+  echo "  Project:            https://github.com/ReiNAS-OS"
+  echo
+} > "$OUT"
+chmod 0644 "$OUT"
+EOF
+chmod 0755 /usr/lib/reinas/reinas-issue-update
+
+cat > /etc/systemd/system/reinas-issue.service <<'EOF'
+[Unit]
+Description=ReiNAS login banner (management URL)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/reinas/reinas-issue-update
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable reinas-issue.service
+
+cat > /etc/NetworkManager/dispatcher.d/50-reinas-issue <<'EOF'
+#!/bin/bash
+# 网络变化时刷新登录提示里的 IP
+case "$2" in
+    up|dhcp4-change|dhcp6-change) /usr/lib/reinas/reinas-issue-update ;;
+esac
+EOF
+chmod 0755 /etc/NetworkManager/dispatcher.d/50-reinas-issue
+
+# 立刻生成一次，这样 dd 完首启就能看到
+/usr/lib/reinas/reinas-issue-update || true
+
+# ============================================================
+# 10. 清理
+# ============================================================
+# dnf 缓存会白占几百 MB
+dnf5 clean all 2>/dev/null || dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf/* /var/cache/libdnf5/* 2>/dev/null || true
+
+# 不要在交付镜像里留 root 的 shell 历史
+rm -f /root/.bash_history
+history -c 2>/dev/null || true
+
+echo "==== ReiNAS config.sh done ===="
