@@ -32,16 +32,16 @@
     <!--
       version 是产物文件名的一部分；release-version 决定 $releasever，
       必须是 Fedora 的主版本号，否则 metalink 里的 repo=fedora-$releasever 会 404。
-      ⚠️ 单独的 <version>0.2.0</version> 会让 dnf 误判 $releasever，
+      ⚠️ 单独的 <version>0.1.0</version> 会让 dnf 误判 $releasever，
          所以这里交给 reinas-release 包提供的 system-release(releasever) 兜底，
          见 packages/reinas-release.spec。
     -->
-    <version>0.2.0</version>
-    <release-version>45</release-version>
+    <version>0.1.0</version>
     <packagemanager>dnf5</packagemanager>
-    <locale>en_US.UTF-8</locale>
+    <locale>en_US</locale>
     <keytable>us</keytable>
     <timezone>Asia/Shanghai</timezone>
+    <release-version>45</release-version>
   </preferences>
 
   <preferences profiles="Disk" arch="x86_64">
@@ -83,12 +83,6 @@
     </type>
   </preferences>
 
-  <!--
-    ⚠️ 这条 aarch64 分支默认注释掉。
-    交叉构建需要 qemu-user-static + binfmt，且 editbootinstall_rpilegacy.sh
-    这类板级脚本要自己维护。先在 x86_64 上把链路跑通，需要时再打开。
-  -->
-  <!--
   <preferences profiles="Disk" arch="aarch64">
     <type image="oem"
           filesystem="btrfs"
@@ -119,7 +113,6 @@
       </oemconfig>
     </type>
   </preferences>
-  -->
 
   <!-- ============================ 仓库 ============================ -->
   <repository type="rpm-md" alias="fedora" priority="99" sourcetype="metalink">
@@ -128,18 +121,31 @@
   <repository type="rpm-md" alias="updates" priority="99" sourcetype="metalink">
     <source path="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&amp;arch=$basearch"/>
   </repository>
-  <!-- 自建包：scripts/build.sh 会先编译 reinas-release 丢进 rpms/，再挂成 repo -->
-  <repository type="rpm-md" alias="reinas" priority="1">
+  <!--
+    自建包仓库：build.sh 会先编译 reinas-release 丢进 rpms/ 并 createrepo，再挂进来。
+    ⚠️ 不要写 priority 属性：kiwi 会因此给 dnf 传 disable-plugin 参数
+       （priorities 和 versionlock 两个），而 Fedora 的 dnf5 没有这两个插件，
+       直接报 "No matches were found for the following plugin name patterns"。
+    也不需要 repo_gpgcheck：本地仓库没有签名，开了反而失败。
+  -->
+  <repository type="rpm-md" alias="reinas">
     <source path="this://./rpms"/>
   </repository>
 
   <!-- ============================ 引导 ============================ -->
-  <packages type="bootstrap">
+  <packages type="bootstrap" patternType="onlyRequired">
     <package name="filesystem"/>
     <package name="glibc-minimal-langpack"/>
   </packages>
 
-  <packages type="image">
+  <!--
+    ⚠️ patternType="onlyRequired" 是这里最关键的属性，不要删。
+    默认值 plusRecommended 会让 dnf 把每个包的「推荐依赖」也一起装，
+    实测会拖进来 qemu / spice-server / gstreamer1-plugins / pipewire /
+    pacman / syslinux 这些 NAS 上完全用不到的东西（720 个包 vs 需要的 ~400）。
+    onlyRequired 只装硬依赖。
+  -->
+  <packages type="image" patternType="onlyRequired">
     <!-- 内核与引导：全部用 Fedora 签名件，保 Secure Boot 链 -->
     <package name="kernel"/>
     <package name="kernel-core"/>
@@ -229,7 +235,14 @@
     <package name="hostname"/>
     <package name="acl"/>
     <package name="attr"/>
+    <!--
+      语言包：只留英文。
+      ⚠️ 绝不要装 glibc-all-langpacks —— 它把全部 locale 塞进镜像，
+         实测单包 227 MiB，占了显式包体积的三分之一。
+         需要中文时再加 glibc-langpack-zh（约 3 MiB），不要回头动 all-langpacks。
+    -->
     <package name="langpacks-en"/>
+    <package name="glibc-langpack-en"/>
 
     <!-- 自建包 -->
     <package name="reinas-release"/>

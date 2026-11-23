@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""
+reinas-update — ReiNAS 的两通道更新器
+
+设计目标：把「软件更新」和「系统更新」在命令层面隔开，而不是靠 dnf 全局
+exclude。原因见 /etc/dnf/libdnf.conf.d/20-reinas-defaults.conf 里的说明：
+全局 exclude 会连安全更新一起静默拦掉，比不做隔离更危险。
+
+通道定义：
+  软件通道 = reinas 仓库里的包（面板、自有服务）。随时可更新，面板会调。
+  系统通道 = fedora / updates 仓库的包（内核、glibc、systemd 等）。
+             只在管理员显式执行时更新。
+
+用法：
+  reinas-update --status          两个通道各有什么待更新（默认）
+  reinas-update --software        只更新软件通道（面板调用）
+  reinas-update --system          系统通道 + 软件通道（需 --yes 确认）
+  reinas-update --json            机器可读输出，供面板解析
+
+退出码：
+  0 成功 / 无更新
+  1 有更新（仅 --status 时）
+  2 参数错误
+  3 更新失败
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from dataclasses import dataclass, field
+
+REINAS_REPO = "reinas"
+SYSTEM_REPOS = ("fedora", "updates")
+
+
+def dnf_available() -> str:
+    """返回可用的 dnf 命令名。Fedora 45 起是 dnf5，二进制仍叫 dnf。"""
+    for cmd in ("dnf5", "dnf"):
+        try:
+            subprocess.run([cmd, "--version"], capture_output=True, check=True)
+            return cmd
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise SystemExit("找不到 dnf")
+
+
+@dataclass
+class Pkg:
+    name: str
+    repo: str
+    version: str
+    arch: str
+
+
+@dataclass
+class Channels:
+    software: list = field(default_factory=list)
+    system: list = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.software) + len(self.system)
+
+
+def list_updates(dnf: str) -> Channels:
+    """
+    解析 `dnf list --upgrades` 的输出，按仓库分流。
+
+    输出示例（列宽不固定，用空白切分后取首列、仓库列、版本列）：
+        reinas-panel.x86_64   1.2.0-1.fc45   reinas
+        kernel.x86_64         7.3.6-200.fc45 updates
+    """
+    proc = subprocess.run(
+        [dnf, "-q", "list", "--upgrades"],
+        capture_output=True, text=True,
+    )
+    # 没有更新时 dnf 返回 0 且输出为空；有错误时返回非 0
+    if proc.returncode != 0 and "Error" in proc.stderr:
+        raise SystemExit(f"dnf 查询失败: {proc.stderr.strip()}")
+
+    ch = Channels()
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("Available", "Last metadata", "Repo")):
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        nevra, version, repo = parts[0], parts[1], parts[2]
+        if "." not in nevra:
+            continue
+        name, arch = nevra.rsplit(".", 1)
+        pkg = Pkg(name=name, repo=repo, version=version, arch=arch)
+        if repo == REINAS_REPO:
+            ch.software.append(pkg)
+        elif repo in SYSTEM_REPOS:
+            ch.system.append(pkg)
+        # 其它第三方仓库不计入任一通道，忽略
+    return ch
+
+
+def run_dnf(dnf: str, args: list, dry_run: bool) -> int:
+    cmd = [dnf] + (["--assumeno"] if dry_run else ["-y"]) + args
+    print(f"  $ {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd).returncode
+
+
+def cmd_status(ch: Channels, as_json: bool) -> int:
+    if as_json:
+        print(json.dumps({
+            "software": [p.__dict__ for p in ch.software],
+            "system": [p.__dict__ for p in ch.system],
+            "total": ch.total,
+        }, ensure_ascii=False, indent=2))
+        return 0 if ch.total == 0 else 1
+
+    if ch.total == 0:
+        print("两个通道都是最新的。")
+        return 0
+
+    print(f"软件通道：{len(ch.software)} 个待更新")
+    for p in ch.software:
+        print(f"  {p.name:<32} {p.version}")
+    print()
+    print(f"系统通道：{len(ch.system)} 个待更新")
+    for p in ch.system:
+        print(f"  {p.name:<32} {p.version}")
+    print()
+    if ch.software:
+        print("→ 软件通道可用 `reinas-update --software` 更新（面板会自动做）。")
+    if ch.system:
+        print("→ 系统通道需管理员执行 `reinas-update --system`，会重启相关服务。")
+    return 1
+
+
+def cmd_software(dnf: str, ch: Channels, dry_run: bool) -> int:
+    if not ch.software:
+        print("软件通道已是最新。")
+        return 0
+    print(f"更新软件通道（{len(ch.software)} 个包）...")
+    # 只从 reinas 仓库装，且只升已安装的包：
+    #   --repo=reinas        不碰 Fedora 仓库
+    #   --upgrade            不装新包，只升已有
+    rc = run_dnf(dnf, [
+        "upgrade", "--repo", REINAS_REPO, "--refresh",
+    ], dry_run)
+    if rc != 0:
+        print("软件通道更新失败。", file=sys.stderr)
+        return 3
+    print("软件通道更新完成。")
+    return 0
+
+
+def cmd_system(dnf: str, ch: Channels, dry_run: bool, assume_yes: bool) -> int:
+    if not ch.total:
+        print("两个通道都是最新的。")
+        return 0
+
+    if ch.system and not assume_yes and not dry_run:
+        print(f"系统通道有 {len(ch.system)} 个包要更新，其中包括内核或基础库。", file=sys.stderr)
+        print("这类更新可能触发重启。确认请加 --yes。", file=sys.stderr)
+        return 2
+
+    print(f"更新系统通道（{len(ch.system)} 个包）+ 软件通道（{len(ch.software)} 个包）...")
+    rc = run_dnf(dnf, ["upgrade", "--refresh"], dry_run)
+    if rc != 0:
+        print("系统更新失败。", file=sys.stderr)
+        return 3
+    print("系统更新完成。若更新了内核，需要重启生效。")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="reinas-update",
+        description="ReiNAS 双通道更新器（软件 / 系统分开）",
+    )
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--status", action="store_true", help="查看两个通道的待更新（默认）")
+    g.add_argument("--software", action="store_true", help="只更新软件通道")
+    g.add_argument("--system", action="store_true", help="更新系统通道（需 --yes）")
+    ap.add_argument("--json", action="store_true", help="机器可读输出，供面板解析")
+    ap.add_argument("--dry-run", action="store_true", help="只显示将要执行什么")
+    ap.add_argument("--yes", action="store_true", help="跳过系统更新的确认")
+    args = ap.parse_args()
+
+    dnf = dnf_available()
+    ch = list_updates(dnf)
+
+    if args.software:
+        return cmd_software(dnf, ch, args.dry_run)
+    if args.system:
+        return cmd_system(dnf, ch, args.dry_run, args.yes)
+    return cmd_status(ch, args.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

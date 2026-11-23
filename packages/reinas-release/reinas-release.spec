@@ -1,6 +1,6 @@
 # ReiNAS 系统身份包
 #
-# 作用：把「Fedora 45」变成「ReiNAS 0.2.0」，同时保留一切让 Fedora 仓库、
+# 作用：把「Fedora 45」变成「ReiNAS 0.1.0」，同时保留一切让 Fedora 仓库、
 # 依赖解析、第三方工具继续正常工作的元数据。
 #
 # 设计原则：**改身份，不改兼容性。**
@@ -8,9 +8,13 @@
 #   机制（dist 宏 / preset / releasever）   → 原样保留
 #
 # 升级到 Fedora 46 时需要改的只有三处（都在本文件或同级 files/ 里）：
-#   1. 下面的 %global fedora_release
+#   1. 下面的 fedora_release 宏定义
 #   2. files/os-release 的 VERSION / PLATFORM_ID / CPE_NAME
 #   3. files/releasever 与 files/system-release-cpe
+#
+# ⚠️ RPM 连注释里的百分号都会当宏展开，所以本文件任何注释里都不许出现百分号，
+#    否则 rpmbuild 会报 "Macro XXX has empty body" 并中断。
+#    下面用「kernel_release」这种写法代替 global 宏就是为了避开这个坑。
 
 %global fedora_release 45
 
@@ -18,8 +22,8 @@
 %global srcroot %{_sourcedir}
 
 Name:           reinas-release
-Version:        0.2.0
-Release:        1%{?dist}
+Version:        0.1.0
+Release:        2%{?dist}
 Summary:        ReiNAS release files and system identity
 
 License:        MIT
@@ -35,7 +39,7 @@ Provides:       system-release
 Provides:       system-release(%{fedora_release})
 
 # ⚠️ 关键行：libdnf 的 detect_releasever() 优先读这个 provide 的值，
-#    而不是包本身的 Version。没有它 $releasever 会变成 0.2.0，
+#    而不是包本身的 Version。没有它 $releasever 会变成 0.1.0，
 #    于是 metalink?repo=fedora-$releasever 全部 404。
 Provides:       system-release(releasever) = %{fedora_release}
 
@@ -53,6 +57,7 @@ Obsoletes:      fedora-release-server <= %{fedora_release}
 
 Requires:       dnf5
 Requires:       systemd
+Requires:       python3
 
 %description
 ReiNAS release files: system identity (/etc/os-release, CPE name, login
@@ -63,7 +68,7 @@ to keep working, and the $releasever override that pins the base release.
 This package replaces the fedora-release package family.
 
 %prep
-# 刻意不使用 Source0 和 %setup：
+# 刻意不使用 Source0 和 setup 宏：
 # RPM 6.0 会自动解包 Source0，而 GNU tar 在 Apple Silicon + Rosetta 的
 # x86_64 模拟环境里会报 ENOSYS（Function not implemented）。
 # 这是纯数据包，install 段直接从源目录取文件即可。
@@ -101,6 +106,12 @@ install -m 0644 files/reinas-release %{buildroot}%{_sysconfdir}/system-release
 # ── $releasever 覆盖 ────────────────────────────────────────────────
 install -m 0644 files/releasever %{buildroot}%{_sysconfdir}/dnf/vars/releasever
 
+# ── ReiNAS 软件更新通道 ─────────────────────────────────────────────
+install -d %{buildroot}%{_sysconfdir}/yum.repos.d
+install -m 0644 files/reinas.repo %{buildroot}%{_sysconfdir}/yum.repos.d/reinas.repo
+install -d %{buildroot}%{_bindir}
+install -m 0755 files/reinas-update %{buildroot}%{_bindir}/reinas-update
+
 # ── Fedora 兼容元数据（原样复制，一个字不改）────────────────────────
 install -m 0644 base/macros.dist            %{buildroot}%{_rpmconfigdir}/macros.d/macros.dist
 install -m 0644 base/system-preset/*.preset %{buildroot}%{_presetdir}/
@@ -134,6 +145,10 @@ install -m 0644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 %dir %{_sysconfdir}/dnf/vars
 %{_sysconfdir}/dnf/vars/releasever
 
+# 软件更新通道
+%config(noreplace) %{_sysconfdir}/yum.repos.d/reinas.repo
+%{_bindir}/reinas-update
+
 %{_rpmconfigdir}/macros.d/macros.dist
 %{_presetdir}/85-display-manager.preset
 %{_presetdir}/90-default.preset
@@ -143,9 +158,10 @@ install -m 0644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 %{_datadir}/dnf5/libdnf.conf.d/20-reinas-defaults.conf
 
 %changelog
-* Sun Nov 23 2026 ReiNAS <dev@reinas.invalid> - 0.2.0-1
+* Mon Nov 23 2026 ReiNAS <dev@reinas.invalid> - 0.1.0-2
 - 迁移到 Fedora 45 基线
 - 收敛为最小 NAS 包集
+- 增加 reiNAS 独立软件更新通道的仓库定义
 
 * Sat Oct 10 2026 mouyase <mouyase@users.noreply.github.com> - 0.1.0-1
 - 初始版本，基于 Fedora 44

@@ -15,7 +15,7 @@ chk() { # chk "描述" "命令" "期望子串"
 echo "ReiNAS 冒烟测试"
 echo "--- 身份 ---"
 chk "NAME"        "grep ^NAME= /etc/os-release"        'ReiNAS'
-chk "VERSION"     "grep ^VERSION= /etc/os-release"     '0.2.0'
+chk "VERSION"     "grep ^VERSION= /etc/os-release"     '0.1.0'
 chk "ID_LIKE"     "grep ^ID_LIKE= /etc/os-release"     'fedora'
 chk "releasever"  "cat /etc/dnf/vars/releasever"       '45'
 echo "--- 安全 ---"
@@ -33,7 +33,7 @@ chk "btrfs根"     "findmnt -no FSTYPE /"               'btrfs'
 chk "子卷数>0"    "btrfs subvolume list / | wc -l"     ''
 chk "压缩挂载"    "findmnt -no OPTIONS /"              'compress=zstd'
 echo "--- 包 ---"
-chk "reinas-release" "rpm -q reinas-release"           'reinas-release-0.2.0'
+chk "reinas-release" "rpm -q reinas-release"           'reinas-release-0.1.0'
 chk "samba"       "rpm -q samba"                       'samba-'
 chk "nfs-utils"   "rpm -q nfs-utils"                   'nfs-utils-'
 chk "cockpit"     "rpm -q cockpit"                     'cockpit-'

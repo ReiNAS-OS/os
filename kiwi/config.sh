@@ -30,7 +30,7 @@ rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
 #  2. dnf 身份：让 $releasever 永远是 Fedora 主版本号
 # ============================================================
 # reinas-release 包已经装了 /etc/dnf/vars/releasever，这里再确认一次，
-# 防止某些 dnf5 版本优先读 os-release 的 VERSION_ID（=0.2.0）。
+# 防止某些 dnf5 版本优先读 os-release 的 VERSION_ID（=0.1.0）。
 echo "45" > /etc/dnf/vars/releasever
 
 # ============================================================

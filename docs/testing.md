@@ -34,7 +34,7 @@ sha256sum -c *.sha256
 qemu-img create -f raw /tmp/target.img 40G
 
 # 写入
-dd if=ReiNAS.x86_64-0.2.0.raw of=/tmp/target.img \
+dd if=ReiNAS.x86_64-0.1.0.raw of=/tmp/target.img \
    bs=4M conv=notrunc status=progress
 ```
 
@@ -62,7 +62,7 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | 检查 | 命令（在启动后的系统里） | 期望 |
 |---|---|---|
 | 系统起来了 | — | 登录提示出现 |
-| 身份正确 | `cat /etc/os-release` | `NAME="ReiNAS"`、`VERSION="0.2.0"` |
+| 身份正确 | `cat /etc/os-release` | `NAME="ReiNAS"`、`VERSION="0.1.0"` |
 | **扩盘生效** | `lsblk` + `df -h /` | 根分区 ≈ 40G，不是 8G |
 | 子卷布局 | `btrfs subvolume list /` | 有 `root` / `home` / `var` / `srv` |
 | SELinux | `getenforce` | `Enforcing` |
@@ -77,7 +77,7 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 
 **最容易被忽略的两项**：
 
-- **`$releasever` 必须是 45 不是 0.2.0**。跑 `dnf repolist -v | grep -i releasever` 确认。如果是 0.2.0，说明 `Provides: system-release(releasever)` 没生效，所有 metalink 会 404。
+- **`$releasever` 必须是 45 不是 0.1.0**。跑 `dnf repolist -v | grep -i releasever` 确认。如果是 0.1.0，说明 `Provides: system-release(releasever)` 没生效，所有 metalink 会 404。
 - **machine-id 必须为空**。如果 dd 出去两台机器 machine-id 相同，systemd 会拒绝启动 journald/networkd，DHCP 也会冲突。
 
 ---
@@ -91,7 +91,7 @@ qemu-img create -f raw /tmp/install-target.img 40G
 
 qemu-system-x86_64 \
   -enable-kvm -m 4096 -smp 2 \
-  -cdrom ReiNAS.x86_64-0.2.0.install.iso \
+  -cdrom ReiNAS.x86_64-0.1.0.install.iso \
   -drive file=/tmp/install-target.img,format=raw,if=virtio \
   -boot d \
   -serial mon:stdio
@@ -157,7 +157,7 @@ chk() { # chk "描述" "命令" "期望子串"
 }
 echo "ReiNAS 冒烟测试"
 chk "系统身份"   "grep ^NAME= /etc/os-release"            'ReiNAS'
-chk "版本"       "grep ^VERSION= /etc/os-release"         '0.2.0'
+chk "版本"       "grep ^VERSION= /etc/os-release"         '0.1.0'
 chk "SELinux"    "getenforce"                             'Enforcing'
 chk "releasever" "cat /etc/dnf/vars/releasever"           '45'
 chk "默认target" "systemctl get-default"                  'multi-user'
@@ -165,7 +165,7 @@ chk "sshd"       "systemctl is-enabled sshd"              'enabled'
 chk "cockpit"    "systemctl is-enabled cockpit.socket"    'enabled'
 chk "root锁定"   "passwd -S root | cut -d' ' -f2"         'L'
 chk "子卷"       "btrfs subvolume list / | wc -l"         ''
-chk "关键包"     "rpm -q reinas-release"                  'reinas-release-0.2.0'
+chk "关键包"     "rpm -q reinas-release"                  'reinas-release-0.1.0'
 chk "dnf仓库"    "dnf repolist 2>/dev/null | wc -l"       ''
 [ "$fail" = 0 ] && echo "全部通过" || { echo "有失败项"; exit 1; }
 ```

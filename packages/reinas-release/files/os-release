@@ -1,10 +1,10 @@
 NAME="ReiNAS"
-VERSION="0.2.0"
+VERSION="0.1.0"
 ID=reinas
 ID_LIKE="fedora"
-VERSION_ID=0.2.0
+VERSION_ID=0.1.0
 PLATFORM_ID="platform:f45"
-PRETTY_NAME="ReiNAS 0.2.0"
+PRETTY_NAME="ReiNAS 0.1.0"
 ANSI_COLOR="0;38;2;126;186;228"
 LOGO=reinas-logo
 CPE_NAME="cpe:/o:reinas:reinas:45"

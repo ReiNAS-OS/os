@@ -83,24 +83,42 @@ build_rpm() {
 # ---------------------------------------------------------------- kiwi
 build_image() {
     log "构建镜像 (profile=$PROFILE type=$IMAGE_TYPE)"
+
+    # 先跑静态检查：XML 注释里的连续减号、locale 后缀这类问题，
+    # kiwi 报的错完全指不到真正原因，提前拦住能省掉大量排查。
+    if ! python3 "$REPO_ROOT/scripts/check-xml.py" "$KIWI_DIR/reinas.kiwi"; then
+        die "kiwi 描述未通过静态检查"
+    fi
+
     need_cmd kiwi-ng
 
     mkdir -p "$OUT_DIR"
-    local args=(
+
+    # ⚠️ kiwi 的选项分两层，位置错了就报 "No such option"：
+    #   全局（--type/--profile/--debug）→ 必须在子命令【之前】
+    #   子命令（--description/--target-dir/--logfile）→ 在子命令之后
+    # 全局选项：--type / --profile / --logfile / --debug（子命令不认识 --logfile）
+    local -a global_args=(
         --type "$IMAGE_TYPE"
         --profile "$PROFILE"
-        --description "$KIWI_DIR"
-        --target-dir "$OUT_DIR"
         --logfile "$OUT_DIR/kiwi-build.log"
     )
-    [ -n "$DEBUG_FLAG" ] && args+=(--debug)
+    [ -n "$DEBUG_FLAG" ] && global_args+=("$DEBUG_FLAG")
+
+    # 子命令选项
+    local -a build_args=(
+        --description "$KIWI_DIR"
+        --target-dir "$OUT_DIR"
+    )
 
     if [ "$BOXBUILD" = 1 ]; then
         log "使用 boxbuild（隔离 VM，不需要 root）"
-        kiwi-ng system boxbuild --box fedora -- "${args[@]}"
+        # boxbuild 把 "kiwi" 之后的一切透传给 box 内的 build 命令
+        kiwi-ng "${global_args[@]}" system boxbuild --box fedora -- \
+            "${build_args[@]}"
     else
         need_root
-        kiwi-ng system build "${args[@]}"
+        kiwi-ng "${global_args[@]}" system build "${build_args[@]}"
     fi
 
     echo
