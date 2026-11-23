@@ -1,0 +1,50 @@
+name: validate
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 kiwi XML 结构
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET, sys
+          r = ET.parse('kiwi/reinas.kiwi').getroot()
+          assert r.get('name'), '缺少 image name'
+          profs = [p.get('name') for p in r.findall('./profiles/profile')]
+          assert profs, '没有 profile'
+          types = r.findall('.//preferences/type')
+          assert types, '没有 type'
+          for t in types:
+              assert t.get('image'), 'type 缺 image 属性'
+          pkgs = r.findall('.//packages[@type="image"]/package')
+          assert len(pkgs) > 10, f'包太少: {len(pkgs)}'
+          print(f'OK: name={r.get("name")} profiles={profs} types={len(types)} pkgs={len(pkgs)}')
+          PY
+
+      - name: 禁止 XML 注释里出现双横线
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          s = open('kiwi/reinas.kiwi').read()
+          bad = [m.group(0) for m in re.finditer(r'<!--.*?-->', s, re.S) if '--' in m.group(0)[4:-3]]
+          if bad:
+              print('XML 注释内不允许出现 --'); sys.exit(1)
+          print('OK')
+          PY
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning scripts/*.sh kiwi/config.sh
+
+      - name: bash 语法
+        run: |
+          for f in scripts/*.sh kiwi/config.sh; do bash -n "$f" && echo "ok $f"; done
