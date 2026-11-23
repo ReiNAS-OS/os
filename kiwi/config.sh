@@ -9,6 +9,7 @@
 #   结构参考 https://forge.fedoraproject.org/releng/kiwi-descriptions (f45)
 #   但去掉所有 vagrant / cloud / desktop 分支，只留 NAS 需要的。
 #
+# shellcheck disable=SC2154  # kiwi_iname / kiwi_profiles 由 kiwi 在构建时注入
 set -euo pipefail
 
 echo "==== ReiNAS config.sh: [$kiwi_iname] profile=[$kiwi_profiles] ===="

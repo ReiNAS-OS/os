@@ -25,7 +25,7 @@ IMAGE_TYPE="${IMAGE_TYPE:-oem}"
 BOXBUILD=0
 DEBUG_FLAG=""
 
-RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLU=$'\033[34m'; DIM=$'\033[2m'; RST=$'\033[0m'
+RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLU=$'\033[34m'; RST=$'\033[0m'
 log()  { printf '%s==>%s %s\n' "$BLU" "$RST" "$*"; }
 ok()   { printf '%s OK %s %s\n' "$GRN" "$RST" "$*"; }
 warn() { printf '%sWARN%s %s\n' "$YEL" "$RST" "$*"; }
