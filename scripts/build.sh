@@ -30,6 +30,9 @@ OUT_DIR="$REPO_ROOT/out"
 PROFILE="${PROFILE:-Disk}"
 BOX="${BOX:-fedora}"
 
+# 已经是 root 就不需要 sudo（CI 里 chroot 进去就是 root）
+if [ "$(id -u)" = 0 ]; then SUDO=""; else SUDO="sudo"; fi
+
 BLUE=$'\033[34m'; GREEN=$'\033[32m'; RED=$'\033[31m'; RESET=$'\033[0m'
 log() { printf '%s==>%s %s\n' "$BLUE" "$RESET" "$*"; }
 ok()  { printf '%s OK %s %s\n' "$GREEN" "$RESET" "$*"; }
@@ -39,7 +42,7 @@ install_deps() {
     log "安装构建依赖"
     local dnf
     dnf=$(command -v dnf5 || command -v dnf) || die "找不到 dnf，请在 Fedora 上运行"
-    ${SUDO:-} "$dnf" install -y -q \
+    $SUDO "$dnf" install -y -q --skip-unavailable \
         kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild \
         distribution-gpg-keys createrepo_c rpm-build
     ok "依赖就绪"
@@ -47,7 +50,9 @@ install_deps() {
 
 build_rpm() {
     log "编译 reinas-release"
-    local rpm_dir="$REPO_ROOT/rpms"
+    # 产物必须落在 kiwi/rpms：boxbuild 只共享 description 目录，
+    # 描述文件里用 this://./rpms 引用它。
+    local rpm_dir="$KIWI_DIR/rpms"
     mkdir -p "$rpm_dir" "$OUT_DIR"
     rm -f "$rpm_dir"/reinas-release-*.rpm
 
@@ -79,7 +84,7 @@ build_image() {
 
     # 全局选项（--type/--profile/--logfile）必须在子命令之前，
     # 子命令选项（--description/--target-dir）在 boxbuild 的 "kiwi" 之后。
-    ${SUDO:-} kiwi-ng --type oem --profile "$PROFILE" \
+    $SUDO kiwi-ng --type oem --profile "$PROFILE" \
         --logfile "$OUT_DIR/kiwi-build.log" \
         system boxbuild --box "$BOX" kiwi \
         --description "$KIWI_DIR" \

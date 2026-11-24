@@ -87,15 +87,7 @@ jobs:
           sudo chroot /mnt/fedora /bin/bash -c "
             set -e
             cd /work
-            PROFILE='${{ inputs.profile || 'Disk' }}' bash scripts/build.sh --rpm-only
-            # boxbuild 的 VM 需要 KVM
-            kiwi-ng --type oem --profile '${{ inputs.profile || 'Disk' }}' \
-              --logfile /work/out/kiwi-build.log \
-              system boxbuild --box fedora \
-                --box-memory 4 --box-smp-cpus 2 \
-                kiwi \
-                --description /work/kiwi \
-                --target-dir /work/out
+            PROFILE='${{ inputs.profile || 'Disk' }}' bash scripts/build.sh
           " 2>&1 | tee build.log
 
       - name: 产物
