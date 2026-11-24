@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [master, main]
+    branches: [main]
     paths:
       - "kiwi/**"
       - "packages/**"
@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # runner 上的 docker 是原生 x86_64，不需要 --platform 模拟
       - name: 检查环境
@@ -72,7 +72,7 @@ jobs:
 
       - name: 上传构建日志
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-log
           path: |
@@ -81,14 +81,25 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: 上传镜像产物
+      # .raw 和 .install.iso 可能各几百 MB。
+      # v7 支持 archive: false 直接上传单个文件，省掉打包解包的时间。
+      - name: 上传 raw 镜像
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: reinas-image
-          path: |
-            out/*.raw
-            out/*.install.iso
+          name: reinas-raw
+          path: out/*.raw
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传装机 ISO
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-install-iso
+          path: out/*.install.iso
+          archive: false
           if-no-files-found: error
           retention-days: 14
 

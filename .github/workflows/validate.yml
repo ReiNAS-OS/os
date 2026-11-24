@@ -2,7 +2,7 @@ name: validate
 
 on:
   push:
-    branches: [master, main]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # kiwi 描述里的四类坑都在这一个脚本里查：
       # 注释中的连续减号（XML 规范禁止）、未转义的 &、locale 后缀、
