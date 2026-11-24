@@ -1,43 +1,64 @@
 #!/usr/bin/env python3
 """
-在 chroot 的 /dev 里创建一个 /dev/log unix socket。
+在 chroot 的 /dev 里创建 /dev/log unix socket，并常驻接收。
 
-dracut 的 dracut-logger.sh 会检查 /dev/log 是否可写，找不到就记录
-  No '/dev/log' or 'logger' included for syslog logging
-kiwi 把 dracut 的任何 stderr 输出都判定为命令失败，所以构建会中断。
+dracut-logger.sh 的判定条件（/usr/lib/dracut/dracut-logger.sh:152）：
+    [[ -S /dev/log ]] && [[ -w /dev/log ]] && command -v logger
+三个条件都满足才算有 syslog 可用。缺任何一个都会记录
+    No '/dev/log' or 'logger' included for syslog logging
+而 kiwi 把 dracut 的 stderr 输出判定为命令失败，构建中断。
 
-GitHub runner 上没有跑 syslog 服务，/dev/log 通常不存在。
-这里起一个只绑定不监听的 SOCK_DGRAM socket：dracut 只要能把日志写进去
-就算通过，不需要有人读。
+关键：socket 必须保持打开并持续接收。
+只 bind 不 recv，写满缓冲区后 write 会阻塞或失败，检查照样不通过。
+所以这里起一个后台线程不停 recv 丢弃。
+
+用法：
+    sudo python3 make-dev-log.py /mnt/fedora/dev/log &
 """
 import os
 import socket
 import sys
+import threading
+import time
+
+
+def serve(path: str) -> None:
+    if os.path.exists(path):
+        try:
+            os.unlink(path)
+        except OSError as e:
+            print(f"无法删除旧 socket：{e}", file=sys.stderr)
+            return
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        sock.bind(path)
+    except OSError as e:
+        print(f"绑定失败：{e}", file=sys.stderr)
+        return
+
+    os.chmod(path, 0o666)
+    print(f"已创建并监听：{path}", flush=True)
+
+    # 持续接收并丢弃，保证写入方永不阻塞
+    while True:
+        try:
+            sock.recv(65535)
+        except OSError:
+            time.sleep(0.1)
 
 
 def main() -> int:
-    # 允许从命令行指定路径，默认按 chroot 布局
     path = sys.argv[1] if len(sys.argv) > 1 else "/mnt/fedora/dev/log"
 
     if not os.path.isdir(os.path.dirname(path)):
         print(f"跳过：{os.path.dirname(path)} 不存在", file=sys.stderr)
         return 1
 
-    if os.path.exists(path):
-        print(f"已存在：{path}")
-        return 0
-
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    try:
-        sock.bind(path)
-    except OSError as e:
-        print(f"创建失败：{e}", file=sys.stderr)
-        return 1
-
-    os.chmod(path, 0o666)
-    print(f"已创建：{path}")
-    # socket 需要保持打开，进程退出后文件保留但无监听；
-    # dracut 只写不读，文件存在且可写即可。
+    # 后台线程服务，主线程保持存活
+    t = threading.Thread(target=serve, args=(path,), daemon=False)
+    t.start()
+    t.join()
     return 0
 
 

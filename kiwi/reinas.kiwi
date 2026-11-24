@@ -207,7 +207,11 @@
     <package name="mdadm"/>
     <package name="smartmontools"/>
     <package name="nvme-cli"/>
+    <!-- util-linux-core 提供 /usr/sbin/logger，dracut 的 dracut-logger.sh
+         用 command -v logger 判断是否有 syslog 可用，没有就记录错误并让
+         kiwi 判定构建失败。 -->
     <package name="util-linux"/>
+    <package name="util-linux-core"/>
     <package name="parted"/>
     <package name="gdisk"/>
 

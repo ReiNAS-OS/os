@@ -96,9 +96,15 @@ jobs:
           sudo mkdir -p /mnt/fedora/work
           sudo mount --bind "$PWD" /mnt/fedora/work
 
-          # dracut 需要 /dev/log，否则构建会被判定失败。
-          # 具体原因见 scripts/make-dev-log.py。
-          sudo python3 scripts/make-dev-log.py /mnt/fedora/dev/log || true
+          # dracut 的 dracut-logger.sh 要求 /dev/log 可写或存在 logger，
+          # 否则记录错误、被 kiwi 判定为构建失败。
+          # 这里起一个常驻监听的后台服务（只写不读会阻塞，必须持续 recv）。
+          sudo python3 scripts/make-dev-log.py /mnt/fedora/dev/log \
+            > /tmp/dev-log.log 2>&1 &
+          sleep 1
+          sudo test -S /mnt/fedora/dev/log \
+            && echo "✓ /dev/log socket 就绪" \
+            || echo "⚠ /dev/log 未创建，依赖 logger 兜底"
 
       - name: 构建
         run: |
