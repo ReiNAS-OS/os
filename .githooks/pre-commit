@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# 提交前钩子：拦住过大的文件和 Python 编译产物。
+#
+# 安装：git config core.hooksPath .githooks
+#
+# 为什么有这个钩子：文件一大，agent 每次读它都烧掉大量 context，
+# 然后就变笨。20 KB（约 5000 token）是个能让人一眼看完的上限。
+#
+# 跳过清单里的文件是「本来就不该拆」的：从上游原样复制的配置、
+# 自动生成的元数据。
+
+set -uo pipefail
+
+LIMIT_BYTES=20000
+
+# 不该按大小检查的文件：从上游原样复制或自动生成
+skip_patterns=(
+    'packages/reinas-release/base/system-preset/'    # Fedora 原样复制
+    'packages/reinas-release/base/user-preset/'
+    'packages/reinas-release/base/macros.dist'
+    '*lock*'
+    '*.min.*'
+)
+
+should_skip() {
+    local f="$1"
+    for pat in "${skip_patterns[@]}"; do
+        # shellcheck disable=SC2053
+        [[ "$f" == $pat ]] && return 0
+        [[ "$f" == *"$pat"* ]] && return 0
+    done
+    return 1
+}
+
+failed=0
+while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    should_skip "$f" && continue
+
+    size=$(wc -c < "$f" | tr -d ' ')
+    if [ "$size" -gt "$LIMIT_BYTES" ]; then
+        tokens=$((size / 4))
+        printf '\n提交被拒绝：文件过大\n' >&2
+        printf '  %s\n' "$f" >&2
+        printf '  %s 字节（约 %s token），上限 %s 字节\n' \
+            "$size" "$tokens" "$LIMIT_BYTES" >&2
+        printf '  请按功能拆成几个文件，或把它挪进 docs/ 作为参考材料。\n' >&2
+        failed=1
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+# Python 编译产物不该入库
+pyc=$(git diff --cached --name-only --diff-filter=ACM | grep -E '__pycache__|\.pyc$' || true)
+if [ -n "$pyc" ]; then
+    printf '\n提交被拒绝：包含 Python 编译产物\n' >&2
+    printf '%s\n' "$pyc" | sed 's/^/  /' >&2
+    printf '  这些是 .gitignore 里该忽略的，请 git rm --cached。\n' >&2
+    failed=1
+fi
+
+if [ "$failed" -ne 0 ]; then
+    exit 1
+fi
+exit 0

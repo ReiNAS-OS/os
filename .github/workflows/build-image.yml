@@ -1,19 +1,8 @@
 name: build-image
 
 # 用 kiwi 官方的 boxbuild 路径构建 ReiNAS 镜像。
-#
-# 为什么是 boxbuild：
-#   kiwi 在自带完整 /dev 和 udev 的环境里构建。boxbuild 会起一个虚拟机
-#   （fedora box），在里面跑 kiwi-ng，loop 分区、grub 模块、dracut
-#   这些依赖宿主完整性的事情都由 box 保证。
-#
-# 为什么不能用容器：
-#   Docker 缺 udev，内核识别 loop 分区后不创建 /dev/loopNpX，
-#   必然报 KiwiMappedDeviceError。已用 Fedora 官方描述零修改复现，见
-#   docs/decisions.md D-006。
-#
-# boxbuild 需要一个完整 Linux 宿主（含 KVM、loop 设备、udev）。
-# GitHub 的 ubuntu-latest runner 满足；本机 macOS 不满足。
+# 需要完整 Linux 宿主（KVM + loop + udev），ubuntu-latest 满足。
+# 为什么不用容器：见 docs/decisions.md D-006。
 
 on:
   workflow_dispatch:
@@ -93,6 +82,9 @@ jobs:
       - name: 产物
         if: always()
         run: |
+          # kiwi 从 boxbuild 的 VM 里带回产物时保留了 root 的 0600 权限，
+          # upload-artifact 以 runner 用户跑，读不了会报 EACCES。
+          sudo chmod -R a+rX out/ 2>/dev/null || true
           ls -lh out/ 2>/dev/null || echo "(空)"
           sudo umount /mnt/fedora/work 2>/dev/null || true
           for m in dev proc sys run; do

@@ -20,6 +20,18 @@ jobs:
           pip3 install --quiet zstandard || true
           python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
+      - name: 禁止编译产物入库
+        run: |
+          # __pycache__ 和 .pyc 不该进版本库。本地有 pre-commit 钩子拦，
+          # 这里兜底防绕过。
+          found=$(git ls-files | grep -E '__pycache__|\.pyc$' || true)
+          if [ -n "$found" ]; then
+            echo "以下编译产物不该入库："
+            echo "$found" | sed 's/^/  /'
+            exit 1
+          fi
+          echo "  ✓ 无编译产物"
+
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
           # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。

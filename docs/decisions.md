@@ -180,18 +180,25 @@ Microsoft CA（固件 db 里）
 
 ---
 
-## D-006：不能用 Docker 容器构建镜像，必须用真 /dev 环境
+## D-006：必须在完整 Linux 环境构建，不能用容器
 
 **日期**：2026-11-24
 **状态**：已决定
 
 ### 结论
 
-镜像构建**不能**在 Docker 容器里跑。必须用有完整 `/dev` 的环境：GitHub Actions 的 KVM runner，或一台真的 Fedora 主机。
+用 `kiwi-ng system boxbuild --box fedora`。它起一台虚拟机（完整 `/dev` + udev）在内跑 `kiwi-ng system build`。
 
-### 现象
+不允许的两条路，以及各自为什么失败：
 
-构建走到最后一步（`sgdisk` 写完分区表、`partx --add` 之后）必然失败：
+| 方式 | 结果 |
+|---|---|
+| Docker 容器直接构建 | ❌ 缺 udev，`/dev/loopNpX` 不创建 |
+| 手搭 chroot + bind 宿主 `/dev` | ❌ loop 通了，但接着撞 grub/dracut 一串问题 |
+
+### 容器为什么不行
+
+构建走到建分区那一步必然失败：
 
 ```
 EXEC: [sgdisk --align-end -n 4:0:0 -c 4:p.lxroot /dev/loop0]
@@ -199,76 +206,25 @@ EXEC: [partx --add /dev/loop0]
 ERROR: KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
 ```
 
-### 证据链
+根因：Docker 容器没有 udev。内核识别出 loop 分区（`sysfs` 里有 `loop0p1`），但没有程序去创建 `/dev/loop0p1` 设备节点。手动 `mknod` 立即可用；启动 `systemd-udevd` + `udevadm trigger` 也无效。
 
-| 测试 | 结果 |
-|---|---|
-| Fedora 官方 `kiwi-descriptions` f45 分支，**零修改零补丁** | 同样失败，同一位置 |
-| 自写描述 + 5 处 kiwi 源码补丁 | 同样失败，同一位置 |
-| 容器内 `losetup -P` 带分区表的镜像 | 内核识别了分区（`sysfs` 里有 `loop1p1`），但 `/dev/loop1p1` 不存在 |
-| 手动 `mknod /dev/loop1p1 b 259 2` | 立即可用 |
-| 启动 `systemd-udevd` + `udevadm trigger` | 仍不创建节点 |
+**这不是 kiwi 的 bug**：用 Fedora 官方 kiwi-descriptions 的 f45 分支、零修改零补丁，失败在完全相同的位置。
 
-**根因**：Docker 容器里没有 udev，内核识别出 loop 分区后没有程序去创建 `/dev/loopNpX` 设备节点。
+### 手搭 chroot 为什么也不行
 
-### 排除的判断
+bind 宿主 `/dev` 进 chroot 后 loop 节点确实能创建（`brw-rw---- root disk 259,5 /dev/loop0p1`），但接着要逐个补偿：
 
-- ❌ **不是 kiwi 的 bug**：Fedora 官方描述同样失败，而 Fedora 自己就是用 kiwi 造 Cloud/Vagrant/容器/spin 镜像的
-- ❌ **不是我们改坏了**：零补丁的官方描述失败在完全相同的位置
-- ❌ **不是架构问题**：aarch64（本地）和 x86_64（CI）都失败
+- `KiwiBootLoaderGrubDataError: grub path i386-pc not found` → 补 `grub2-pc` / `grub2-efi-ia32` 全套
+- `dracut[E]: No '/dev/log' or 'logger' included` → 补常驻 socket 或 `util-linux-core`
 
-### 附带结论：那 5 处 kiwi 补丁是无效的
+这些在 boxbuild 的完整 VM 里都不存在。手搭等于把 kiwi 已经封装好的环境维护责任揽过来。
 
-过程中给 kiwi 打了 5 处源码补丁（裁 plugin 参数、去 `--config`、加 `--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：**官方描述不加任何补丁也能推进到同一个位置。** 补丁只是让构建多跑了十分钟，没有解决任何实质问题。
+### 关键事实：包名不同于 openSUSE
 
-已全部移除。教训：**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
-
-### 环境要求
-
-| 环境 | 能否出镜像 |
-|---|---|
-| GitHub Actions `ubuntu-latest` + `--device /dev/kvm` | ✅ |
-| 真 Fedora 主机 | ✅ |
-| `kiwi-boxbuild --container`（kiwi 官方容器路径） | 待验证 |
-| 普通 `docker run --privileged` | ❌ 缺 udev |
-
-### 容器仍然有用的部分
-
-容器可以验证到「软件安装完成」这一步：bootstrap、325 个包的 image 阶段、`config.sh` 全部能跑通。所以本地调试包依赖、找包名错误、验证 `config.sh` 逻辑时，容器依然是最快的。只是**最后的分区+文件系统步骤必须在真环境完成**。
-
----
-
-## D-007：构建走 kiwi 官方 boxbuild，不手搭 chroot
-
-**日期**：2026-11-24
-**状态**：已决定
-
-### 结论
-
-用 `kiwi-ng system boxbuild --box fedora`。它起一个自带完整 `/dev` 和 udev 的虚拟机，在里面跑 `kiwi-ng system build`。
-
-### 为什么不是手搭 chroot
-
-D-006 确认容器不行之后，试过「解出 Fedora rootfs + bind mount 宿主 /dev 再 chroot」。结果：
-
-1. **loop 分区问题确实解决了** —— `chroot` 内 `/dev/loop0p1` 正常创建：
-   ```
-   brw-rw---- 1 root disk 259, 5 Nov 24 05:16 /dev/loop0p1
-   ```
-2. **但又接连撞上新问题**：
-   - `KiwiBootLoaderGrubDataError: grub path i386-pc not found` —— 需要补 `grub2-pc`/`grub2-efi-ia32` 全套
-   - `dracut[E]: No '/dev/log' or 'logger' included for syslog logging` —— 需要常驻的 `/dev/log` socket 或 `util-linux-core` 的 logger
-
-这些问题**在 boxbuild 的完整 VM 里都不存在**。手搭 chroot 等于把 kiwi 官方已经封装好的环境维护责任揽到自己身上，每补一个坑就多一份自己维护的东西。
-
-### 关键事实
-
-| 名称 | 归属 | Fedora 里有吗 |
+| 名称 | 归属 | Fedora 有吗 |
 |---|---|---|
-| `kiwi-boxbuild` 命令 | openSUSE OBS 仓库 | ❌ 没有 |
-| `kiwi-boxed-plugin` 包 → `kiwi-ng system boxbuild` | Fedora 官方仓库 | ✅ 有 |
-
-所以 Fedora 上的正确写法是：
+| `kiwi-boxbuild` 命令 | openSUSE OBS | ❌ |
+| `kiwi-boxed-plugin` → `kiwi-ng system boxbuild` | Fedora 官方 | ✅ |
 
 ```bash
 dnf install kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild
@@ -278,18 +234,14 @@ kiwi-ng --type oem --profile Disk system boxbuild --box fedora kiwi \
 
 ### boxbuild 的共享限制
 
-box 只共享两个目录给虚拟机：`--description` 和 `--target-dir`。因此：
+box 只共享 `--description` 和 `--target-dir` 两个目录。因此：
 
 - 本地 rpm 仓库必须放在 description 目录**内部**（`kiwi/rpms/`），用 `this://./rpms` 引用
-- 放在仓库根目录（`/work/rpms`）构建箱看不到
+- 放在仓库根目录构建箱看不到
 - 不能用 `127.0.0.1:8888` 的 HTTP 服务——VM 有独立网络命名空间
 
-### 环境要求
+### 附带教训：那 5 处 kiwi 补丁是无效的
 
-| 环境 | 能否构建 |
-|---|---|
-| 真 Fedora 主机（KVM + loop + udev） | ✅ |
-| GitHub Actions `ubuntu-latest` | ✅ |
-| macOS / Docker 容器 | ❌ |
+过程中给 kiwi 打过 5 处源码补丁（裁 plugin 参数、去 `--config`、加 `--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：官方描述不加任何补丁也能推进到同一位置。补丁只让构建多跑十分钟，没解决任何问题。
 
-boxbuild 的 box 是 KVM 虚拟机，必须有 `/dev/kvm`。
+**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**

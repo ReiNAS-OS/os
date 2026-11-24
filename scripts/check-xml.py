@@ -32,30 +32,13 @@ def check(path: Path, online: bool = False) -> int:
         ):
             errs.append(f"{path}:{i}: 含未转义的 & → {line.strip()[:80]}")
 
-    # 3. 整体可解析性
+    # 3. 整体可解析性。解析不出来就没法往下查，直接报告走人，
+    #    否则下面 root.findall 会抛 UnboundLocalError，报错看不懂。
     try:
         root = ET.fromstring(src)
     except ET.ParseError as e:
         errs.append(f"{path}: XML 解析失败 → {e}")
-        # 6. schema 属性合法性
-    # kiwi 的 RELAX NG schema 不允许 <packages> 上写 arch 属性，
-    # arch 只能写在 <package> 上。写错了要等 box 启动、包都装完
-    # 才在 schema 校验阶段暴露，白等十几分钟。
-    #   RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages
-    allowed_packages_attrs = {"type", "patternType", "profiles"}
-    for sec in root.findall(".//packages"):
-        for attr in sec.attrib:
-            if attr not in allowed_packages_attrs:
-                errs.append(
-                    f"{path}: <packages> 上不允许 {attr} 属性"
-                    f"（只允许 {sorted(allowed_packages_attrs)}；"
-                    f"arch 应写在 <package> 上）"
-                )
-
-    # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
-    errs.extend(check_packages_exist(path, root, online))
-
-    return report(errs)
+        return report(errs)
 
     # 4. kiwi 结构的最小断言
     if root.tag != "image":
@@ -68,6 +51,17 @@ def check(path: Path, online: bool = False) -> int:
     # 第一个 <preferences> 通常只放全局属性（version/packagemanager/locale...），
     # 不带 <type>；带 profiles 或 arch 的才必须有 <type>。
     for pref in root.findall("./preferences"):
+        # locale 校验必须在 continue 之前：locale 恰恰写在「没有 <type>」
+        # 的全局 preferences 里。放在下面那段里会被跳过。
+        # kiwi 的 schema 只认 en_US，带 .UTF-8 后缀会报
+        #   RELAXNG_ERR_INTEREXTRA: Extra element locale
+        loc = pref.find("locale")
+        if loc is not None and loc.text and "." in loc.text:
+            errs.append(
+                f"{path}: <locale>{loc.text}</locale> 非法，"
+                f"应为 {loc.text.split('.')[0]}（不能带 .UTF-8 后缀）"
+            )
+
         is_global = pref.get("profiles") is None and pref.get("arch") is None
         t = pref.find("type")
         if t is None:
@@ -78,13 +72,6 @@ def check(path: Path, online: bool = False) -> int:
             continue
         if not t.get("image"):
             errs.append(f"{path}: <type> 缺少 image 属性")
-        # locale 不能带 .UTF-8 之类的后缀，kiwi 的 schema 只认 en_US 形式
-        loc = pref.find("locale")
-        if loc is not None and loc.text and "." in loc.text:
-            errs.append(
-                f"{path}: <locale>{loc.text}</locale> 非法，"
-                f"应为 {loc.text.split('.')[0]}（不能带 .UTF-8 后缀）"
-            )
 
     # 5. patternType 提醒（数量会翻倍，属于性能/体积问题而非错误）
     img_pkgs = root.findall('.//packages[@type="image"]')
@@ -141,12 +128,31 @@ def _fetch_available_packages() -> set:
         raw = urllib.request.urlopen(f"{base}/{gz.group(1)}", timeout=180).read()
         data = zlib.decompress(raw, 16 + zlib.MAX_WBITS)
     elif zst:
+        raw = urllib.request.urlopen(f"{base}/{zst.group(1)}", timeout=180).read()
         try:
             import zstandard
+            data = zstandard.ZstdDecompressor().decompress(
+                raw, max_output_size=300_000_000
+            )
         except ImportError:
-            raise RuntimeError("元数据只有 .zst 格式，需要 pip install zstandard")
-        raw = urllib.request.urlopen(f"{base}/{zst.group(1)}", timeout=180).read()
-        data = zstandard.ZstdDecompressor().decompress(raw, max_output_size=300_000_000)
+            # 没有 zstandard 就调外部的 zstd 命令行。Fedora 自带，
+            # CI 的 ubuntu-latest 也有。两条路都不通才算失败 ——
+            # 以前这里是「静默跳过 + 报通过」，等于这项检查从来没跑过。
+            import shutil
+            import subprocess
+            import tempfile
+
+            if not shutil.which("zstd"):
+                raise RuntimeError(
+                    "需要 zstandard 模块或 zstd 命令行来解 primary.xml.zst"
+                )
+            with tempfile.NamedTemporaryFile(suffix=".zst") as f:
+                f.write(raw)
+                f.flush()
+                data = subprocess.run(
+                    ["zstd", "-dc", f.name],
+                    capture_output=True, check=True,
+                ).stdout
     else:
         raise RuntimeError("repomd 里找不到 primary 元数据")
 
@@ -175,8 +181,9 @@ def check_packages_exist(path: Path, root, online: bool) -> list:
     try:
         avail = _fetch_available_packages()
     except Exception as e:
-        print(f"  提示: 跳过包名校验（{e}）")
-        return []
+        # 显式要求 --online 就是要求真校验。拿不到元数据算失败，
+        # 不能报「通过」—— 那会让漏包一直漂到构建末尾才炸。
+        return [f"{path}: 包名校验失败，拿不到 Fedora 元数据（{e}）"]
 
     bad = []
     for sec in root.findall(".//packages"):
