@@ -4,7 +4,11 @@ description: |
   前提：调用方已 checkout 仓库，且工作目录就是仓库根。
 
   ⚠️ 这个 composite action 不含 checkout —— 调用方 checkout 之后才能用，
-     否则 ${{ github.workspace }} 里没有脚本。
+     否则工作目录里没有脚本。
+
+  ⚠️ 元数据字段里不能写表达式（$ 加大括号），GitHub 会报
+     「Unrecognized named-value」并拒绝加载这个 action。要写表达式只在
+     下面的 runs.steps 里写。
 
 inputs:
   profile:

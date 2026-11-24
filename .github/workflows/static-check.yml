@@ -196,7 +196,21 @@ jobs:
             fi
           done
 
-          # 3. workflow 文件名必须是动词在前的英文（不含下划线/空格）
+          # 3. composite action 的元数据字段里不能有表达式。
+          #    GitHub 加载 action.yml 时先校验 name/description/inputs，
+          #    这几个字段不支持 $ 加大括号，写了会报 Unrecognized named-value
+          #    并拒绝加载整个 action，构建直接失败（踩过一次）。
+          for act in .github/actions/*/action.yml; do
+            [ -f "$act" ] || continue
+            meta=$(awk '/^runs:/{exit} {print}' "$act")
+            if printf '%s' "$meta" | grep -q '\${{'; then
+              echo "  ✗ $act 的元数据字段里有表达式，GitHub 会拒绝加载"
+              printf '%s\n' "$meta" | grep -n '\${{' | head -3 | sed 's/^/      /'
+              fail=1
+            fi
+          done
+
+          # 4. workflow 文件名必须是动词在前的英文（不含下划线/空格）
           for f in .github/workflows/*.yml; do
             base=$(basename "$f" .yml)
             case "$base" in
