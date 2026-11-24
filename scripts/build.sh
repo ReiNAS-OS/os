@@ -70,6 +70,14 @@ build_rpm() {
         find "$rpm_dir" -mindepth 1 -type d -delete 2>/dev/null || true
     fi
     ok "产物: $(basename "$rpm_dir"/reinas-release-*.noarch.rpm)"
+
+    # 必须生成仓库元数据：kiwi 把 reinas 当 rpm-md 仓库用，
+    # 只有 rpm 文件没有 repodata 的话，boxbuild 里会报
+    #   Failed to download metadata (baseurl: "file:///description/rpms/")
+    log "生成仓库元数据"
+    command -v createrepo_c >/dev/null || die "找不到 createrepo_c"
+    createrepo_c --quiet "$rpm_dir"
+    ok "repodata 就绪"
 }
 
 build_image() {
