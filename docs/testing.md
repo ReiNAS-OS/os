@@ -12,6 +12,22 @@ sudo dnf install -y qemu-kvm qemu-img edk2-ovmf virt-install
 
 `edk2-ovmf` 提供 UEFI 固件，验证 Secure Boot 必需。
 
+### 0.1 构建时打开调试账号
+
+**必须做这一步，否则下文所有检查都进不去。** 默认构建出来的镜像：
+
+- `root` 和 `reinas` 都是锁定密码
+- SSH 是 `PasswordAuthentication no`，且镜像里没有预置任何公钥
+
+结果是串口能看到登录提示，但没有可用的凭据。见 decisions.md D-007。
+
+```bash
+sudo ./scripts/build.sh --debug-password     # reinas / 123456
+```
+
+打开后 `reinas` 账号可以密码登录（在 `wheel` 组，能 `sudo`）。验证脚本
+`scripts/smoke.sh` 也要以 root 跑，登录后 `sudo -i` 即可。
+
 ---
 
 ## 1. 检查产物完整性
@@ -30,15 +46,29 @@ sha256sum -c *.sha256
 ### 2.1 造一块目标盘并写入
 
 ```bash
+cd out/
+
+# CI 产物是 xz 压缩的，先解开。文件名带 `-0` 是 RPM release 号，别漏。
+xz -dk ReiNAS.x86_64-0.1.0-0.raw.xz
+# → ReiNAS.x86_64-0.1.0-0.raw
+
+# 先验一下有没有解压坏
+sha256sum -c ReiNAS.x86_64-0.1.0-0.raw.xz.sha256
+
 # 造一块 40G 的假盘（比镜像大，用来验证扩盘）
 qemu-img create -f raw /tmp/target.img 40G
 
 # 写入
-dd if=ReiNAS.x86_64-0.1.0.raw of=/tmp/target.img \
+dd if=ReiNAS.x86_64-0.1.0-0.raw of=/tmp/target.img \
    bs=4M conv=notrunc status=progress
 ```
 
-**注意 `conv=notrunc`**：不加的话 dd 会把目标文件截断到源文件大小，扩盘就测不出来了。
+**两处容易踩的**：
+
+- **`conv=notrunc`**：不加的话 dd 会把目标文件截断到源文件大小，扩盘就测不出来了。
+- **文件名**：实际产物是 `ReiNAS.x86_64-0.1.0-0.raw.xz` —— 带 release 号 `-0`，
+  且是压缩的。`ReiNAS.x86_64-0.1.0.raw` 这个写法不存在。CI 上传的 artifact
+  解压出来就是这个名字。
 
 ### 2.2 启动
 
@@ -62,23 +92,27 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | 检查 | 命令（在启动后的系统里） | 期望 |
 |---|---|---|
 | 系统起来了 | — | 登录提示出现 |
+| **能登录** | 控制台输入 `reinas` / `123456` | 进入 shell（仅 `--debug-password` 构建） |
 | 身份正确 | `cat /etc/os-release` | `NAME="ReiNAS"`、`VERSION="0.1.0"` |
 | **扩盘生效** | `lsblk` + `df -h /` | 根分区 ≈ 40G，不是 8G |
 | 子卷布局 | `btrfs subvolume list /` | 有 `root` / `home` / `var` / `srv` |
 | SELinux | `getenforce` | `Enforcing` |
 | 服务 | `systemctl is-enabled sshd cockpit.socket` | 都是 `enabled` |
 | 默认 target | `systemctl get-default` | `multi-user.target` |
-| machine-id 唯一 | `cat /etc/machine-id` | **每次部署都不一样**（非空非固定） |
+| machine-id 生成 | `cat /etc/machine-id` | 非空，且**每台机器不同** |
 | root 锁定 | `passwd -S root` | `L`（locked） |
+| 调试账号状态 | `passwd -S reinas` | 调试构建 `P`；生产构建 `L` |
+| 调试标记 | `ls /etc/reinas/BUILD-IS-DEBUG` | 调试构建存在；生产构建不存在 |
 | 登录提示 | 看 console | 显示 `ReiNAS management: https://<ip>:9090` |
 | **Secure Boot** | `mokutil --sb-state` 或 `dmesg \| grep -i secure` | `SecureBoot enabled` |
 | dnf 可用 | `dnf repolist` | 能看到 `fedora` / `updates`，且 `$releasever` = 45 |
 | 关键包在 | `rpm -q reinas-release samba nfs-utils cockpit podman` | 全部已安装 |
 
-**最容易被忽略的两项**：
+**最容易被忽略的三项**：
 
 - **`$releasever` 必须是 45 不是 0.1.0**。跑 `dnf repolist -v | grep -i releasever` 确认。如果是 0.1.0，说明 `Provides: system-release(releasever)` 没生效，所有 metalink 会 404。
-- **machine-id 必须为空**。如果 dd 出去两台机器 machine-id 相同，systemd 会拒绝启动 journald/networkd，DHCP 也会冲突。
+- **machine-id 在镜像里必须是空文件，首启才生成**。判断要看「每台机器不同」，不是「文件为空」——启动之后它必然有值。镜像里的空文件由 `config.sh` 和描述文件的 `<packages type="delete">` 共同保证。
+- **`/etc/reinas/debug.conf` 不该存在于装好的系统里**。config.sh 读完就删。`ls /etc/reinas/` 只应看到 `BUILD-IS-DEBUG`（调试构建）或什么都没有（生产构建）。
 
 ---
 
@@ -91,11 +125,14 @@ qemu-img create -f raw /tmp/install-target.img 40G
 
 qemu-system-x86_64 \
   -enable-kvm -m 4096 -smp 2 \
-  -cdrom ReiNAS.x86_64-0.1.0.install.iso \
+  -cdrom ReiNAS.x86_64-0.1.0-0.install.iso \
   -drive file=/tmp/install-target.img,format=raw,if=virtio \
   -boot d \
   -serial mon:stdio
 ```
+
+注意 ISO 的名字不带 release 号 `-0`（raw 带，ISO 不带），这是 kiwi 的命名规则。
+在 `out/` 里 `ls *.iso` 确认。
 
 ### 3.2 验证清单
 
@@ -138,37 +175,19 @@ bootctl status 2>/dev/null | grep -i secure   # 若用 systemd-boot
 
 ## 5. 冒烟测试脚本
 
-把 2.3 的检查项做成一个脚本，构建后跑一次：
+不要照抄这份文档里的检查项 —— 用仓库里的脚本，它和本文档保持同步：
 
 ```bash
-#!/bin/bash
-# scripts/smoke.sh — 在已启动的 ReiNAS 系统里跑
-set -u
-fail=0
-chk() { # chk "描述" "命令" "期望子串"
-    local desc="$1" cmd="$2" want="$3" got
-    got=$(eval "$cmd" 2>&1)
-    if echo "$got" | grep -q -- "$want"; then
-        printf '  ok   %s\n' "$desc"
-    else
-        printf '  FAIL %s\n        期望含: %s\n        实际: %s\n' "$desc" "$want" "$got"
-        fail=1
-    fi
-}
-echo "ReiNAS 冒烟测试"
-chk "系统身份"   "grep ^NAME= /etc/os-release"            'ReiNAS'
-chk "版本"       "grep ^VERSION= /etc/os-release"         '0.1.0'
-chk "SELinux"    "getenforce"                             'Enforcing'
-chk "releasever" "cat /etc/dnf/vars/releasever"           '45'
-chk "默认target" "systemctl get-default"                  'multi-user'
-chk "sshd"       "systemctl is-enabled sshd"              'enabled'
-chk "cockpit"    "systemctl is-enabled cockpit.socket"    'enabled'
-chk "root锁定"   "passwd -S root | cut -d' ' -f2"         'L'
-chk "子卷"       "btrfs subvolume list / | wc -l"         ''
-chk "关键包"     "rpm -q reinas-release"                  'reinas-release-0.1.0'
-chk "dnf仓库"    "dnf repolist 2>/dev/null | wc -l"       ''
-[ "$fail" = 0 ] && echo "全部通过" || { echo "有失败项"; exit 1; }
+# 在已启动的 ReiNAS 系统里，以 root 跑
+sudo ./scripts/smoke.sh
 ```
+
+**不要在这里贴第三份副本。** 这份文档曾经抄了一份 `smoke.sh` 的全文，结果和
+实际脚本对不上，还带着两条「期望串为空 = 永远通过」的假断言。需要改检查项就
+改 `scripts/smoke.sh`，那是唯一来源。
+
+脚本覆盖：身份（`NAME`/`VERSION`/`ID_LIKE`）、`releasever`、SELinux、账号锁定、
+sshd 配置、服务 enable 状态、btrfs 根与子卷、压缩挂载、关键包、dnf 仓库。
 
 ---
 
@@ -179,8 +198,9 @@ chk "dnf仓库"    "dnf repolist 2>/dev/null | wc -l"       ''
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 完整构建 | ✅ | CI 成功，产物已作为 artifact 上传（`.raw.xz` 626 MB、`.install.iso` 863 MB） |
+| 调试账号开关 | ⏳ | 逻辑本地验过（空文件/密码内容/元字符/换行），未在真镜像里跑过 |
 | 镜像能启动 | ⏳ | 产物已出，尚未在 QEMU 里跑过 |
 | 扩盘在真机上生效 | ⏳ | 目前只在 QEMU 测 |
 | Secure Boot 真机启动 | ⏳ | 需 OVMF + 真机双验证 |
-| aarch64 构建 | ❌ | 描述文件里只配了 x86_64 |
+| aarch64 构建 | ❌ | `preferences arch="aarch64"` 存在但没有 aa64 的 shim/grub 包，永远跑不通 |
 | 跨 Fedora 版本升级 | ❌ | 0.3 之前不做，见 decisions.md |
