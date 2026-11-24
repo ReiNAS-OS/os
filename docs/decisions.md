@@ -449,3 +449,8 @@ for kiwi_file in sorted(glob.iglob(glob_match)):
 - **锁文件里的版本必须还在仓库里**。Fedora 的 `updates` 会清理旧版本包，几个月后
   拿老锁文件可能装不上。这时的表现是 dnf 报「找不到该版本」，而不是静默装新版。
 - **`reinas-release` 不在锁文件里**（它是自建包，版本由 spec 控制）。
+
+---
+
+**从 D-009 起的决策在 [decisions-panel.md](decisions-panel.md)。** 这份文件已接近
+提交钩子的 20 KB 上限，后续决策往新文件写。

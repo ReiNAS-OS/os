@@ -180,8 +180,6 @@
     -->
     <package name="grub2-efi-x64" arch="x86_64"/>
     <package name="grub2-efi-x64-modules" arch="x86_64"/>
-    <package name="grub2-efi-ia32" arch="x86_64"/>
-    <package name="grub2-efi-ia32-modules" arch="x86_64"/>
     <package name="grub2-pc" arch="x86_64"/>
     <package name="grub2-pc-modules" arch="x86_64"/>
     <package name="grub2-tools"/>
@@ -242,22 +240,23 @@
     <package name="nfs4-acl-tools"/>
     <package name="rsync"/>
 
-    <!-- 管理面 -->
-    <package name="cockpit"/>
-    <package name="cockpit-storaged"/>
-    <package name="cockpit-networkmanager"/>
-    <package name="cockpit-podman"/>
-    <package name="cockpit-selinux"/>
-    <package name="cockpit-packagekit"/>
-    <package name="udisks2"/>
-    <package name="udisks2-btrfs"/>
-    <package name="podman"/>
+    <!--
+      管理面：不装 Cockpit，也不装 podman。
+      自有面板直接作为 systemd 服务跑在宿主上（见 panel/ 目录）。
+
+      为什么不留 Cockpit：它和自有面板抢同一个入口（9090 + 登录提示），
+      而且每个 Fedora 大版本都要跟着改插件。留着只会制造两套管理界面。
+
+      ⚠️ 移除后镜像里没有任何 Web 管理界面，直到面板做出来。
+         这段时间只能靠 SSH 或物理控制台。
+      ⚠️ udisks2 是 cockpit-storaged 的后端，标准 storaged API。
+         面板如果要用 udisks2 管盘，再把它加回来。
+    -->
 
     <!-- 系统基础 -->
     <package name="dnf5"/>
     <package name="dnf5-plugins"/>
     <package name="systemd"/>
-    <package name="systemd-oomd-defaults"/>
     <package name="systemd-resolved"/>
     <package name="selinux-policy-targeted"/>
     <package name="policycoreutils"/>
@@ -269,11 +268,13 @@
     <package name="kbd"/>
     <package name="kbd-misc"/>
     <package name="tzdata"/>
-    <package name="vim-enhanced"/>
-    <package name="tmux"/>
-    <package name="htop"/>
+    <!--
+      只留 vim-minimal（0.9 MB），它提供 /usr/bin/vi。
+      不出问题时用不到编辑器；出问题时没有 vi 只能靠 cat/sed 改配置，
+      得不偿失。vim-enhanced（2.2 MB）的语法高亮/插件在 NAS 上没意义。
+    -->
+    <package name="vim-minimal"/>
     <package name="curl"/>
-    <package name="wget2-wget"/>
     <package name="tar"/>
     <package name="xz"/>
     <package name="zstd"/>
@@ -288,7 +289,6 @@
          实测单包 227 MiB，占了显式包体积的三分之一。
          需要中文时再加 glibc-langpack-zh（约 3 MiB），不要回头动 all-langpacks。
     -->
-    <package name="langpacks-en"/>
     <package name="glibc-langpack-en"/>
 
     <!-- 自建包 -->

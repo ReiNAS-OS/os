@@ -167,7 +167,7 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 │  os-release、issue、CPE、默认主机名                 │
 └────────────────────────────────────────────────────┘
 ┌─ 主动加（NAS 的能力）────────────────────────────┐
-│  cockpit、samba、nfs、podman、btrfs、smartmontools  │
+│  samba、nfs、btrfs、xfs、lvm、mdadm、smartmontools  │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -229,5 +229,6 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 - [docs/decisions.md](docs/decisions.md) — 为什么选 Fedora 而非 Leap/Arch，以及被否掉的方案
 - [docs/testing.md](docs/testing.md) — 怎么在 QEMU 里验证产物
+- [docs/decisions-panel.md](docs/decisions-panel.md) — 面板相关决策（从 D-009 起）
 - [docs/image-size.md](docs/image-size.md) — 863 MB 是怎么来的，还能不能更小
 - [docs/kiwi-pitfalls.md](docs/kiwi-pitfalls.md) — kiwi 构建的坑
