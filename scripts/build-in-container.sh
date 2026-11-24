@@ -17,7 +17,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 FEDORA_VER="${FEDORA_VER:-45}"
-PLATFORM="${PLATFORM:-linux/amd64}"
+# 默认跟随宿主架构。硬编码 linux/amd64 在 Apple Silicon 上会让 Rosetta
+# 参与进来，而 amd64 容器的动态链接器在 arm64 内核下会解析失败：
+#   OrbStack ERROR: Dynamic loader not found: /lib64/ld-linux-x86-64.so.2
+# 需要交叉构建 x86_64 镜像时显式传 PLATFORM=linux/amd64，但要知道代价。
+case "$(uname -m)" in
+    arm64|aarch64) DEFAULT_PLATFORM=linux/arm64 ;;
+    *)             DEFAULT_PLATFORM=linux/amd64 ;;
+esac
+PLATFORM="${PLATFORM:-$DEFAULT_PLATFORM}"
 MODE=build
 
 while [ $# -gt 0 ]; do
@@ -74,8 +82,9 @@ case "$HOST_ARCH" in
     x86_64|amd64)  HOST_ARCH=x86_64 ;;
 esac
 if [ "$HOST_ARCH" = aarch64 ] && [ "$PLATFORM" = "linux/amd64" ]; then
-    echo "提示: 在 arm64 宿主上模拟 x86_64 构建，速度会慢 2-4 倍。"
-    echo "      若目标只是 aarch64 镜像，用 PLATFORM=linux/arm64 会快得多。"
+    echo "警告: 在 arm64 宿主上模拟 x86_64。除了慢 2-4 倍，"
+    echo "      还可能撞上 Rosetta 的动态链接器问题导致构建失败。"
+    echo "      交叉构建请优先在真 x86_64 机器或 CI 上做。"
 fi
 
 run_args=(

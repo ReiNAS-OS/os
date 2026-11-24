@@ -37,6 +37,16 @@
          见 packages/reinas-release.spec。
     -->
     <version>0.1.0</version>
+    <!--
+      ⚠️ 必须是 dnf4，不能写 dnf5。
+      kiwi 11.1.x 的 dnf5 后端硬编码了 disable-plugin 参数
+      （priorities 和 versionlock 两个），
+      而 Fedora 45 根本没有这两个 dnf5 插件（dnf5-plugins 里只有 actions/
+      appstream/cow/local/rhsm/systemd-inhibit/txnupd），于是每次构建都在
+      bootstrap 阶段直接失败：
+        No matches were found for the following plugin name patterns
+      dnf4 后端没有这段代码，走 dnf4 即可。dnf4 在 Fedora 45 里仍然可用。
+    -->
     <packagemanager>dnf5</packagemanager>
     <locale>en_US</locale>
     <keytable>us</keytable>
@@ -115,27 +125,44 @@
   </preferences>
 
   <!-- ============================ 仓库 ============================ -->
-  <repository type="rpm-md" alias="fedora" priority="99" sourcetype="metalink">
+  <repository type="rpm-md" alias="fedora" sourcetype="metalink">
     <source path="https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&amp;arch=$basearch"/>
   </repository>
-  <repository type="rpm-md" alias="updates" priority="99" sourcetype="metalink">
+  <repository type="rpm-md" alias="updates" sourcetype="metalink">
     <source path="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&amp;arch=$basearch"/>
   </repository>
   <!--
     自建包仓库：build.sh 会先编译 reinas-release 丢进 rpms/ 并 createrepo，再挂进来。
+    ⚠️ 用 HTTP 而不是本地路径：image 阶段是 chroot 内的 dnf5，
+       本地路径 dir:///work/rpms 在 chroot 里不存在。
+       构建脚本会在容器内起一个 8888 端口的静态服务指向 rpms/，chroot 通过
+       127.0.0.1 访问（容器与 chroot 共享网络命名空间）。
     ⚠️ 不要写 priority 属性：kiwi 会因此给 dnf 传 disable-plugin 参数
        （priorities 和 versionlock 两个），而 Fedora 的 dnf5 没有这两个插件，
        直接报 "No matches were found for the following plugin name patterns"。
     也不需要 repo_gpgcheck：本地仓库没有签名，开了反而失败。
   -->
   <repository type="rpm-md" alias="reinas">
-    <source path="this://./rpms"/>
+    <source path="http://127.0.0.1:8888/"/>
   </repository>
 
   <!-- ============================ 引导 ============================ -->
+  <!--
+    bootstrap 阶段只装最小可运行集合。
+    ⚠️ bash 必须显式列出：RPM 的 %pre scriptlet 用 /bin/sh 执行，
+       而 Fedora 的 sh 是 bash 提供的。如果没有 bash 就进事务，
+       crypto-policies 这类带 %pre 的包会以 exit 127
+      （command not found）失败，而错误信息完全指不到真正原因。
+      这是依赖环：crypto-policies → /bin/sh → bash → glibc → ...
+      显式列出 bash 能让 RPM 的拓扑排序断在正确位置。
+  -->
   <packages type="bootstrap" patternType="onlyRequired">
     <package name="filesystem"/>
+    <package name="glibc"/>
     <package name="glibc-minimal-langpack"/>
+    <package name="bash"/>
+    <package name="coreutils"/>
+    <package name="rpm"/>
   </packages>
 
   <!--
