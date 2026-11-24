@@ -349,6 +349,13 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# --lock-out 与 --lock 语义冲突：一次构建不可能「既锁定版本又导出这次装到的
+# 版本」。锁定构建的产物清单没有比对意义（它就是按锁装的），而导出锁文件的
+# 构建必须是跟最新版的。同时给说明比让用户猜好。
+if [ "$LOCK_OUT" = 1 ] && [ -n "$LOCK_FILE" ]; then
+    die "--lock-out 与 --lock 不能同时用：锁定构建不导出锁文件"
+fi
+
 case "$ACTION" in
     deps)  install_deps ;;
     rpm)   build_rpm ;;

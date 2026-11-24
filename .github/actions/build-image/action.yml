@@ -1,0 +1,124 @@
+name: 构建镜像
+description: |
+  在 Fedora 45 的 chroot 里跑 kiwi boxbuild，产出镜像。
+  前提：调用方已 checkout 仓库，且工作目录就是仓库根。
+
+  ⚠️ 这个 composite action 不含 checkout —— 调用方 checkout 之后才能用，
+     否则工作目录里没有脚本。
+
+  ⚠️ 元数据字段里不能写表达式（$ 加大括号），GitHub 会报
+     「Unrecognized named-value」并拒绝加载这个 action。要写表达式只在
+     下面的 runs.steps 里写。
+
+inputs:
+  profile:
+    description: kiwi profile
+    required: false
+    default: Disk
+  lock-out:
+    description: "1 = 构建后导出 out/*.lock（导出锁文件用）"
+    required: false
+    default: "0"
+  lock-file:
+    description: "锁文件路径（相对仓库根）。非空时按它复现构建。"
+    required: false
+    default: ""
+  debug-password:
+    description: "调试账号密码。留空 = 关闭（生产形态）"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 检查宿主环境
+      shell: bash
+      run: |
+        echo "arch: $(uname -m)"
+        echo "kernel: $(uname -r)"
+        ls /dev/kvm 2>&1 || echo "无 /dev/kvm"
+        ls /dev/loop* 2>&1 | head -3
+        systemctl is-active systemd-udevd || true
+        df -h /
+
+    # boxbuild 需要 kiwi 和 boxed 插件。Fedora 的包名是
+    # kiwi-boxed-plugin（kiwi-boxbuild 那个命令只有 openSUSE 有）。
+    - name: 准备 Fedora 环境
+      shell: bash
+      run: |
+        set -e
+        sudo mkdir -p /mnt/fedora
+
+        # 只借用 podman 取 rootfs，构建本身在 boxbuild 的 VM 里跑
+        CID=$(sudo podman create fedora:45)
+        sudo podman export "$CID" | sudo tar -x -C /mnt/fedora
+        sudo podman rm "$CID"
+
+        # boxbuild 需要：KVM 设备、loop 设备、网络、udev 运行目录
+        for p in dev proc sys run; do
+          sudo mkdir -p "/mnt/fedora/$p"
+          sudo mount --bind "/$p" "/mnt/fedora/$p"
+        done
+        sudo cp /etc/resolv.conf /mnt/fedora/etc/resolv.conf
+
+        # 仓库挂进 chroot 的 /work（脚本和描述文件都在那里）
+        sudo mkdir -p /mnt/fedora/work
+        sudo mount --bind "$PWD" /mnt/fedora/work
+
+    - name: 安装构建工具
+      shell: bash
+      run: |
+        sudo chroot /mnt/fedora /bin/bash -c '
+          dnf install -y -q \
+            kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild \
+            distribution-gpg-keys createrepo_c rpm-build
+          echo "kiwi: $(kiwi-ng --version 2>&1 | tail -1)"
+          echo "=== 可用 box ==="
+          kiwi-ng system boxbuild --list-boxes 2>&1 | grep -E "^\s+name:" | head
+        '
+
+    - name: 构建镜像
+      shell: bash
+      env:
+        DEBUG_PASSWORD: ${{ inputs.debug-password }}
+        PROFILE: ${{ inputs.profile }}
+        LOCK_OUT: ${{ inputs.lock-out }}
+        LOCK_FILE: ${{ inputs.lock-file }}
+      run: |
+        set -o pipefail
+        if [ -n "$DEBUG_PASSWORD" ]; then
+          echo "::warning::本次构建开启了调试账号，产物不可对外发布"
+        fi
+
+        # 组装 build.sh 的参数
+        args=()
+        [ "$LOCK_OUT" = "1" ] && args+=(--lock-out)
+        if [ -n "$LOCK_FILE" ]; then
+          # 锁文件由调用方放到仓库根的 .lock/ 下，chroot 里看到的是 /work/.lock/
+          args+=(--lock "/work/$LOCK_FILE")
+          echo "==> 按锁文件构建: $LOCK_FILE"
+          head -5 "/work/$LOCK_FILE"
+        fi
+
+        # 用 sudo env 把变量塞进 chroot 的环境，而不是拼进 bash -c 的字符串：
+        # 密码里带引号、$ 或空格时不会把命令拆坏。
+        # chroot 里的变量用位置参数传，避免二次展开。
+        sudo env DEBUG_PASSWORD="$DEBUG_PASSWORD" PROFILE="$PROFILE" \
+          chroot /mnt/fedora /bin/bash -c '
+            set -e
+            cd /work
+            bash scripts/build.sh "$@"
+          ' _ "${args[@]}" 2>&1 | tee build.log
+
+    - name: 整理产物
+      if: always()
+      shell: bash
+      run: |
+        # kiwi 从 boxbuild 的 VM 里带回产物时保留了 root 的 0600 权限，
+        # upload-artifact 以 runner 用户跑，读不了会报 EACCES。
+        sudo chmod -R a+rX out/ 2>/dev/null || true
+        ls -lh out/ 2>/dev/null || echo "(空)"
+        sudo umount /mnt/fedora/work 2>/dev/null || true
+        for m in dev proc sys run; do
+          sudo umount -R "/mnt/fedora/$m" 2>/dev/null || true
+        done

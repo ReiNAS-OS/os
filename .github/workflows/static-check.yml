@@ -167,6 +167,67 @@ jobs:
 
           if [ "$fail" != 0 ]; then exit 1; fi
 
+      - name: 检查 workflow 结构
+        run: |
+          # 三个 workflow 分工明确，构建逻辑只有一份。
+          fail=0
+
+          # 1. composite action 必须存在且被两个构建 workflow 引用
+          if [ ! -f .github/actions/build-image/action.yml ]; then
+            echo "  ✗ 缺少 .github/actions/build-image/action.yml"
+            fail=1
+          fi
+          for wf in image-build image-rebuild; do
+            if ! grep -q '.github/actions/build-image' ".github/workflows/$wf.yml"; then
+              echo "  ✗ $wf.yml 没有引用 composite action，构建逻辑会重复"
+              fail=1
+            fi
+          done
+
+          # 2. 构建逻辑不该再散落在 workflow 里
+          #    （chroot / podman export 这类只该出现在 action 里）
+          #    （只查两个构建 workflow —— 本文件里出现这个字符串是检查逻辑本身）
+          for wf in image-build image-rebuild; do
+            f=".github/workflows/$wf.yml"
+            [ -f "$f" ] || continue
+            if grep -q 'podman export' "$f"; then
+              echo "  ✗ $wf.yml 里直接写了 podman export，应移进 composite action"
+              fail=1
+            fi
+          done
+
+          # 3. composite action 的元数据字段里不能有表达式。
+          #    GitHub 加载 action.yml 时先校验 name/description/inputs，
+          #    这几个字段不支持表达式求值，写了会报 Unrecognized named-value
+          #    并拒绝加载整个 action，构建直接失败（踩过一次）。
+          #
+          #    ⚠️ 这里不能把表达式字面量写进 grep —— GitHub 会扫描 run: 里的
+          #    整个脚本文本，字面量会被当成真的表达式，模板解析失败、
+          #    整个 workflow 加载不起来（踩过第二次）。用 $ 加拼接绕开。
+          expr_open='$''{'
+          for act in .github/actions/*/action.yml; do
+            [ -f "$act" ] || continue
+            meta=$(awk '/^runs:/{exit} {print}' "$act")
+            if printf '%s' "$meta" | grep -qF "$expr_open"; then
+              echo "  ✗ $act 的元数据字段里有表达式，GitHub 会拒绝加载"
+              printf '%s\n' "$meta" | grep -nF "$expr_open" | head -3 | sed 's/^/      /'
+              fail=1
+            fi
+          done
+
+          # 4. workflow 文件名必须是动词在前的英文（不含下划线/空格）
+          for f in .github/workflows/*.yml; do
+            base=$(basename "$f" .yml)
+            case "$base" in
+              *[A-Z_]*|*' '*)
+                echo "  ✗ $f 文件名应为小写英文连字符（如 image-build）"
+                fail=1 ;;
+            esac
+          done
+
+          if [ "$fail" != 0 ]; then exit 1; fi
+          echo "  ✓ 结构正确：3 个 workflow，构建逻辑只有一份"
+
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
           # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。

@@ -109,22 +109,45 @@ os/
 
 ## CI
 
-两个 workflow，**文件名保持英文，显示名和每个步骤名用中文**：
+三个 workflow，**文件名保持英文（动词在前），显示名和每个步骤名用中文**：
 
-| 文件 | 显示名 | 触发 | 干什么 |
-|---|---|---|---|
-| `build-image.yml` | 构建镜像 | push 到 `main`（`kiwi/` `packages/` `scripts/` 变动）、手动 | boxbuild 出 `.raw.xz` + `.install.iso`，约 15 分钟 |
-| `validate.yml` | 校验 | push、PR、手动 | 静态检查，约 20 秒 |
+| 文件 | 显示名 | 触发 | 干什么 | 耗时 |
+|---|---|---|---|---|
+| `static-check.yml` | 校验 | push、PR、手动 | 静态检查，不产出镜像 | ~20 秒 |
+| `image-build.yml` | 构建镜像 | push 到 `main`（`kiwi/` `packages/` `scripts/` 变动）、手动 | 出 `.raw.xz` + `.install.iso` + `.lock` | ~15 分钟 |
+| `image-rebuild.yml` | 锁定重建 | 只有手动 | 拿历史 `.lock` 重建，验证版本一致 | ~15 分钟 |
 
-`validate.yml` 查这些：kiwi 描述（注释里的连续减号、未转义的 `&`、`locale`
-后缀、包名是否真在 Fedora 里）、`spec` 注释里有没有百分号、`reinas-update`
-能不能编译、shellcheck、bash 语法，以及**调试账号是否默认关闭**。
+构建步骤抽在 `.github/actions/build-image` 这个 composite action 里，
+`image-build.yml` 和 `image-rebuild.yml` 共用同一份，改构建流程只需改一处。
+
+### 校验查什么
+
+kiwi 描述（注释里的连续减号、未转义的 `&`、`locale` 后缀、包名是否真在
+Fedora 里）、`spec` 注释里有没有百分号、`reinas-update` 能不能编译、
+shellcheck、bash 语法，以及两组守护：
+
+- **调试账号是否默认关闭**（D-007）
+- **版本锁定链路是否完整**（D-008）
 
 本地提交前先跑一次，别等 CI：
 
 ```bash
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 ```
+
+### 怎么用锁定重建
+
+`image-build.yml` 每次都会产出 `reinas-lock` artifact（保留 90 天）。
+要复现某次构建：
+
+1. 打开那次「构建镜像」运行的页面，URL 末尾的数字就是 run id
+2. Actions → 锁定重建 → Run workflow
+3. `lock_run_id` 填那个数字，跑
+
+它会按锁文件装回同一批版本，最后一步**逐包比对**锁文件与实际产物，
+不一致就红。
+
+也可以把锁文件内容粘进 `lock_content` 输入，适合从别处拿到的 `.lock`。
 
 ---
 
