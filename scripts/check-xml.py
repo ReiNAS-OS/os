@@ -37,7 +37,22 @@ def check(path: Path, online: bool = False) -> int:
         root = ET.fromstring(src)
     except ET.ParseError as e:
         errs.append(f"{path}: XML 解析失败 → {e}")
-        # 6. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
+        # 6. schema 属性合法性
+    # kiwi 的 RELAX NG schema 不允许 <packages> 上写 arch 属性，
+    # arch 只能写在 <package> 上。写错了要等 box 启动、包都装完
+    # 才在 schema 校验阶段暴露，白等十几分钟。
+    #   RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages
+    allowed_packages_attrs = {"type", "patternType", "profiles"}
+    for sec in root.findall(".//packages"):
+        for attr in sec.attrib:
+            if attr not in allowed_packages_attrs:
+                errs.append(
+                    f"{path}: <packages> 上不允许 {attr} 属性"
+                    f"（只允许 {sorted(allowed_packages_attrs)}；"
+                    f"arch 应写在 <package> 上）"
+                )
+
+    # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
     errs.extend(check_packages_exist(path, root, online))
 
     return report(errs)
@@ -80,7 +95,22 @@ def check(path: Path, online: bool = False) -> int:
                 f"patternType=\"onlyRequired\"，weak deps 会被装进镜像"
             )
 
-    # 6. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
+    # 6. schema 属性合法性
+    # kiwi 的 RELAX NG schema 不允许 <packages> 上写 arch 属性，
+    # arch 只能写在 <package> 上。写错了要等 box 启动、包都装完
+    # 才在 schema 校验阶段暴露，白等十几分钟。
+    #   RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages
+    allowed_packages_attrs = {"type", "patternType", "profiles"}
+    for sec in root.findall(".//packages"):
+        for attr in sec.attrib:
+            if attr not in allowed_packages_attrs:
+                errs.append(
+                    f"{path}: <packages> 上不允许 {attr} 属性"
+                    f"（只允许 {sorted(allowed_packages_attrs)}；"
+                    f"arch 应写在 <package> 上）"
+                )
+
+    # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
     errs.extend(check_packages_exist(path, root, online))
 
     return report(errs)

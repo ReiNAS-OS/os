@@ -305,9 +305,9 @@
     对照 Fedora 官方 components/boot.xml（f45 分支），这几个包都放在
     <packages type="iso" profiles="BootCore,BootCoreLive"> 里。
   -->
-  <packages type="iso" patternType="onlyRequired" arch="x86_64">
-    <package name="grub2-efi-x64-cdboot"/>
-    <package name="grub2-efi-ia32-cdboot"/>
+  <packages type="iso" patternType="onlyRequired">
+    <package name="grub2-efi-x64-cdboot" arch="x86_64"/>
+    <package name="grub2-efi-ia32-cdboot" arch="x86_64"/>
   </packages>
 
   <packages type="uninstall">
