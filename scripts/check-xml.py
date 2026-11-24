@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-def check(path: Path) -> int:
+def check(path: Path, online: bool = False) -> int:
     src = path.read_text(encoding="utf-8")
     errs = []
 
@@ -37,7 +37,25 @@ def check(path: Path) -> int:
         root = ET.fromstring(src)
     except ET.ParseError as e:
         errs.append(f"{path}: XML 解析失败 → {e}")
-        return report(errs)
+        # 6. schema 属性合法性
+    # kiwi 的 RELAX NG schema 不允许 <packages> 上写 arch 属性，
+    # arch 只能写在 <package> 上。写错了要等 box 启动、包都装完
+    # 才在 schema 校验阶段暴露，白等十几分钟。
+    #   RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages
+    allowed_packages_attrs = {"type", "patternType", "profiles"}
+    for sec in root.findall(".//packages"):
+        for attr in sec.attrib:
+            if attr not in allowed_packages_attrs:
+                errs.append(
+                    f"{path}: <packages> 上不允许 {attr} 属性"
+                    f"（只允许 {sorted(allowed_packages_attrs)}；"
+                    f"arch 应写在 <package> 上）"
+                )
+
+    # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
+    errs.extend(check_packages_exist(path, root, online))
+
+    return report(errs)
 
     # 4. kiwi 结构的最小断言
     if root.tag != "image":
@@ -77,7 +95,101 @@ def check(path: Path) -> int:
                 f"patternType=\"onlyRequired\"，weak deps 会被装进镜像"
             )
 
+    # 6. schema 属性合法性
+    # kiwi 的 RELAX NG schema 不允许 <packages> 上写 arch 属性，
+    # arch 只能写在 <package> 上。写错了要等 box 启动、包都装完
+    # 才在 schema 校验阶段暴露，白等十几分钟。
+    #   RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages
+    allowed_packages_attrs = {"type", "patternType", "profiles"}
+    for sec in root.findall(".//packages"):
+        for attr in sec.attrib:
+            if attr not in allowed_packages_attrs:
+                errs.append(
+                    f"{path}: <packages> 上不允许 {attr} 属性"
+                    f"（只允许 {sorted(allowed_packages_attrs)}；"
+                    f"arch 应写在 <package> 上）"
+                )
+
+    # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
+    errs.extend(check_packages_exist(path, root, online))
+
     return report(errs)
+
+
+# Fedora 主版本与元数据地址
+FEDORA_RELEASE = "45"
+REPOMD = (
+    f"https://mirror.rackspace.com/fedora/releases/{FEDORA_RELEASE}"
+    "/Everything/x86_64/os/repodata/repomd.xml"
+)
+
+
+def _fetch_available_packages() -> set:
+    """下载 Fedora 的 primary 元数据，返回可用包名集合。"""
+    import urllib.request
+    import zlib
+
+    repomd = urllib.request.urlopen(REPOMD, timeout=60).read().decode()
+    base = REPOMD.rsplit("/repodata/", 1)[0]
+
+    # Fedora 的 primary 元数据默认是 .zst。优先找 .gz，避免依赖 zstandard；
+    # 只有 .zst 时才需要第三方模块。
+    gz = re.search(r'href="([^"]*primary\.xml\.gz)"', repomd)
+    zst = re.search(r'href="([^"]*primary\.xml\.zst)"', repomd)
+
+    if gz:
+        raw = urllib.request.urlopen(f"{base}/{gz.group(1)}", timeout=180).read()
+        data = zlib.decompress(raw, 16 + zlib.MAX_WBITS)
+    elif zst:
+        try:
+            import zstandard
+        except ImportError:
+            raise RuntimeError("元数据只有 .zst 格式，需要 pip install zstandard")
+        raw = urllib.request.urlopen(f"{base}/{zst.group(1)}", timeout=180).read()
+        data = zstandard.ZstdDecompressor().decompress(raw, max_output_size=300_000_000)
+    else:
+        raise RuntimeError("repomd 里找不到 primary 元数据")
+
+    names = set()
+    for m in re.finditer(rb'<package type="rpm">(.*?)</package>', data, re.S):
+        b = m.group(1)
+        n = re.search(rb"<name>(.*?)</name>", b).group(1).decode()
+        a = re.search(rb"<arch>(.*?)</arch>", b).group(1).decode()
+        if a in ("x86_64", "noarch"):
+            names.add(n)
+    return names
+
+
+def check_packages_exist(path: Path, root, online: bool) -> list:
+    """校验描述文件里的包名在 Fedora 里真实存在。
+
+    这是本项目最常犯的错误：漏包（少写 dracut-network）或拼错包名，
+    都要等到构建跑到最末尾才暴露，白等十几分钟。这里提前拦住。
+
+    自建包（reinas-release）和 glob（iwl* 之类）跳过。
+    """
+    if not online:
+        return []
+
+    self_built = {"reinas-release"}
+    try:
+        avail = _fetch_available_packages()
+    except Exception as e:
+        print(f"  提示: 跳过包名校验（{e}）")
+        return []
+
+    bad = []
+    for sec in root.findall(".//packages"):
+        sec_type = sec.get("type")
+        for pkg in sec.findall("package"):
+            name = pkg.get("name")
+            if not name or name in self_built:
+                continue
+            if any(c in name for c in "*?["):
+                continue
+            if name not in avail:
+                bad.append(f"{path}: [{sec_type}] 包名不存在: {name}")
+    return bad
 
 
 def report(errs) -> int:
@@ -91,13 +203,15 @@ def report(errs) -> int:
 
 
 if __name__ == "__main__":
-    targets = [Path(p) for p in (sys.argv[1:] or ["kiwi/reinas.kiwi"])]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    online = "--online" in sys.argv
+    targets = [Path(p) for p in (args or ["kiwi/reinas.kiwi"])]
     rc = 0
     for t in targets:
         if not t.exists():
             print(f"  ✗ 文件不存在: {t}")
             rc = 1
             continue
-        print(f"检查 {t}")
-        rc |= check(t)
+        print(f"检查 {t}" + ("（含包名校验）" if online else ""))
+        rc |= check(t, online)
     sys.exit(rc)

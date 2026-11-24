@@ -129,16 +129,15 @@
     <source path="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&amp;arch=$basearch"/>
   </repository>
   <!--
-    自建包仓库：build.sh 会先编译 reinas-release 丢进 rpms/ 并 createrepo，再挂进来。
-    ⚠️ 用 HTTP 而不是本地路径：image 阶段是 chroot 内的 dnf5，
-       本地路径 dir:///work/rpms 在 chroot 里不存在。
-       构建脚本会在容器内起一个 8888 端口的静态服务指向 rpms/，chroot 通过
-       127.0.0.1 访问（容器与 chroot 共享网络命名空间）。
+    自建包仓库：构建脚本先编译 reinas-release 到 kiwi/rpms/ 并 createrepo。
+    ⚠️ 必须放在 description 目录内部，且用 this:// 引用。
+       boxbuild 只把 description 目录共享给构建箱，
+       放在外面（如仓库根目录的 rpms/）构建箱看不到。
     不用 repo_gpgcheck：本地仓库没有签名，开了反而失败。
     不用 priority：Fedora 的 dnf5 没有 priorities 插件。
   -->
   <repository type="rpm-md" alias="reinas">
-    <source path="http://127.0.0.1:8888/"/>
+    <source path="this://./rpms"/>
   </repository>
 
   <!-- ============================ 引导 ============================ -->
@@ -173,13 +172,32 @@
     <package name="kernel-modules"/>
     <package name="kernel-modules-extra"/>
     <package name="shim-x64" arch="x86_64"/>
+    <!--
+      grub 全套。grub2-pc 提供 i386-pc 模块（BIOS 兼容引导），
+      只装 grub2-efi-x64 会报：
+        KiwiBootLoaderGrubDataError: grub path i386-pc not found
+      Fedora 官方描述同时装 efi-x64 / efi-ia32 / pc 三个。
+    -->
     <package name="grub2-efi-x64" arch="x86_64"/>
     <package name="grub2-efi-x64-modules" arch="x86_64"/>
+    <package name="grub2-efi-ia32" arch="x86_64"/>
+    <package name="grub2-efi-ia32-modules" arch="x86_64"/>
+    <package name="grub2-pc" arch="x86_64"/>
+    <package name="grub2-pc-modules" arch="x86_64"/>
     <package name="grub2-tools"/>
     <package name="grub2-tools-minimal"/>
+    <package name="grub2-tools-extra"/>
+    <package name="grubby"/>
     <package name="efibootmgr"/>
     <package name="dracut"/>
     <package name="dracut-config-generic"/>
+    <!--
+      dracut-network 提供 network 模块，kiwi 生成 install ISO 的 initramfs
+      时用 kiwi-dump 模块，而 kiwi-dump 依赖 network：
+        Module 'kiwi-dump' depends on module 'network', which can't be installed
+      缺了它 .raw 能出，但 .install.iso 会失败。
+    -->
+    <package name="dracut-network"/>
 
     <!-- kiwi 的 OEM 运行时：扩盘 + install.iso 部署 -->
     <package name="dracut-kiwi-oem-repart"/>
@@ -195,7 +213,11 @@
     <package name="mdadm"/>
     <package name="smartmontools"/>
     <package name="nvme-cli"/>
+    <!-- util-linux-core 提供 /usr/sbin/logger，dracut 的 dracut-logger.sh
+         用 command -v logger 判断是否有 syslog 可用，没有就记录错误并让
+         kiwi 判定构建失败。 -->
     <package name="util-linux"/>
+    <package name="util-linux-core"/>
     <package name="parted"/>
     <package name="gdisk"/>
 
@@ -269,6 +291,25 @@
     <package name="reinas-release"/>
   </packages>
 
+  <!--
+    ==================== install ISO 专用包 ====================
+
+    kiwi 的包分三类：type="image" 装进磁盘镜像，type="iso" 只装进
+    install ISO（.install.iso）的构建环境，type="bootstrap" 是最小引导集。
+
+    此前只写了 image 段，漏掉 iso 段，导致 .install.iso 阶段缺输入：
+      - grub2-efi-*-cdboot 提供 El Torito EFI 引导镜像（cdboot.img），
+        ISO 的 UEFI 启动靠它，没有就是空引导。
+      - dracut-network 提供 network 模块，kiwi-dump 模块依赖它。
+
+    对照 Fedora 官方 components/boot.xml（f45 分支），这几个包都放在
+    <packages type="iso" profiles="BootCore,BootCoreLive"> 里。
+  -->
+  <packages type="iso" patternType="onlyRequired">
+    <package name="grub2-efi-x64-cdboot" arch="x86_64"/>
+    <package name="grub2-efi-ia32-cdboot" arch="x86_64"/>
+  </packages>
+
   <packages type="uninstall">
     <!-- 服务器不需要的东西，减小攻击面与体积 -->
     <package name="iwl*"/>
@@ -276,7 +317,6 @@
     <package name="NetworkManager-wifi"/>
     <package name="wpa_supplicant"/>
     <package name="bluez"/>
-    <package name="firewalld-config-workstation"/>
     <package name="plymouth-theme-*"/>
   </packages>
 

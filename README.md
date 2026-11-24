@@ -13,25 +13,32 @@
 
 ## 快速开始
 
-**出完整镜像**（需要真 `/dev`，Docker 容器不行，见下方说明）：
+构建走 kiwi 官方的 **boxbuild** 路径：在一个自带完整 `/dev` 和 udev 的虚拟机里构建。
 
 ```bash
-# 在 GitHub Actions 上跑（推荐，runner 有真 KVM）
-gh workflow run build-image.yml
-
-# 或在一台真的 Fedora 45 主机上
-sudo ./scripts/build.sh
+sudo ./scripts/build.sh                # 完整构建
+sudo ./scripts/build.sh --deps         # 只装依赖
+sudo ./scripts/build.sh --rpm-only     # 只编译 reinas-release
+./scripts/build.sh --list-boxes        # 查看可用构建箱
 ```
 
-**本地容器只能验证到软件安装完成**，最后的分区步骤会失败：
+产物在 `out/`。
 
-```bash
-./scripts/build-in-container.sh
-# ...
-# KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
+### 环境要求
+
+| 环境 | 能否构建 |
+|---|---|
+| 真 Fedora 主机（含 KVM、loop、udev） | ✅ |
+| GitHub Actions `ubuntu-latest` | ✅ |
+| macOS / Docker 容器 | ❌ |
+
+**容器为什么不行**：Docker 缺 udev，内核识别 loop 分区后没人创建 `/dev/loopNpX`，kiwi 建分区时必然失败：
+
+```
+KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
 ```
 
-原因见 [docs/decisions.md](docs/decisions.md) D-006：Docker 缺 udev，`partx --add` 后 `/dev/loopNpX` 不会被创建。调试包依赖、验证 `config.sh` 逻辑时容器仍然好用。
+已用 Fedora 官方描述零修改复现确认，详见 [docs/decisions.md](docs/decisions.md) D-006。
 
 ---
 

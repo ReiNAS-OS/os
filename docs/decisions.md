@@ -235,3 +235,61 @@ ERROR: KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
 ### 容器仍然有用的部分
 
 容器可以验证到「软件安装完成」这一步：bootstrap、325 个包的 image 阶段、`config.sh` 全部能跑通。所以本地调试包依赖、找包名错误、验证 `config.sh` 逻辑时，容器依然是最快的。只是**最后的分区+文件系统步骤必须在真环境完成**。
+
+---
+
+## D-007：构建走 kiwi 官方 boxbuild，不手搭 chroot
+
+**日期**：2026-11-24
+**状态**：已决定
+
+### 结论
+
+用 `kiwi-ng system boxbuild --box fedora`。它起一个自带完整 `/dev` 和 udev 的虚拟机，在里面跑 `kiwi-ng system build`。
+
+### 为什么不是手搭 chroot
+
+D-006 确认容器不行之后，试过「解出 Fedora rootfs + bind mount 宿主 /dev 再 chroot」。结果：
+
+1. **loop 分区问题确实解决了** —— `chroot` 内 `/dev/loop0p1` 正常创建：
+   ```
+   brw-rw---- 1 root disk 259, 5 Nov 24 05:16 /dev/loop0p1
+   ```
+2. **但又接连撞上新问题**：
+   - `KiwiBootLoaderGrubDataError: grub path i386-pc not found` —— 需要补 `grub2-pc`/`grub2-efi-ia32` 全套
+   - `dracut[E]: No '/dev/log' or 'logger' included for syslog logging` —— 需要常驻的 `/dev/log` socket 或 `util-linux-core` 的 logger
+
+这些问题**在 boxbuild 的完整 VM 里都不存在**。手搭 chroot 等于把 kiwi 官方已经封装好的环境维护责任揽到自己身上，每补一个坑就多一份自己维护的东西。
+
+### 关键事实
+
+| 名称 | 归属 | Fedora 里有吗 |
+|---|---|---|
+| `kiwi-boxbuild` 命令 | openSUSE OBS 仓库 | ❌ 没有 |
+| `kiwi-boxed-plugin` 包 → `kiwi-ng system boxbuild` | Fedora 官方仓库 | ✅ 有 |
+
+所以 Fedora 上的正确写法是：
+
+```bash
+dnf install kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild
+kiwi-ng --type oem --profile Disk system boxbuild --box fedora kiwi \
+  --description ./kiwi --target-dir ./out
+```
+
+### boxbuild 的共享限制
+
+box 只共享两个目录给虚拟机：`--description` 和 `--target-dir`。因此：
+
+- 本地 rpm 仓库必须放在 description 目录**内部**（`kiwi/rpms/`），用 `this://./rpms` 引用
+- 放在仓库根目录（`/work/rpms`）构建箱看不到
+- 不能用 `127.0.0.1:8888` 的 HTTP 服务——VM 有独立网络命名空间
+
+### 环境要求
+
+| 环境 | 能否构建 |
+|---|---|
+| 真 Fedora 主机（KVM + loop + udev） | ✅ |
+| GitHub Actions `ubuntu-latest` | ✅ |
+| macOS / Docker 容器 | ❌ |
+
+boxbuild 的 box 是 KVM 虚拟机，必须有 `/dev/kvm`。

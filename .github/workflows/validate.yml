@@ -16,7 +16,9 @@ jobs:
       # 注释中的连续减号（XML 规范禁止）、未转义的 &、locale 后缀、
       # 以及 patternType 是否设成 onlyRequired。
       - name: 校验 kiwi 描述
-        run: python3 scripts/check-xml.py kiwi/reinas.kiwi
+        run: |
+          pip3 install --quiet zstandard || true
+          python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
@@ -45,11 +47,11 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S warning scripts/*.sh kiwi/config.sh .docker/*.sh
+          shellcheck -S warning scripts/*.sh kiwi/config.sh
 
       - name: bash 语法
         run: |
-          for f in scripts/*.sh kiwi/config.sh .docker/*.sh; do
+          for f in scripts/*.sh kiwi/config.sh; do
             bash -n "$f" && echo "  ✓ $f"
           done
 

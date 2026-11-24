@@ -16,3 +16,4 @@ kiwi-build.log
 .DS_Store
 *.swp
 *~
+/kiwi/rpms/
