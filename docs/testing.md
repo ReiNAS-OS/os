@@ -111,7 +111,9 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 **最容易被忽略的三项**：
 
 - **`$releasever` 必须是 45 不是 0.1.0**。跑 `dnf repolist -v | grep -i releasever` 确认。如果是 0.1.0，说明 `Provides: system-release(releasever)` 没生效，所有 metalink 会 404。
-- **machine-id 在镜像里必须是空文件，首启才生成**。判断要看「每台机器不同」，不是「文件为空」——启动之后它必然有值。镜像里的空文件由 `config.sh` 和描述文件的 `<packages type="delete">` 共同保证。
+- **machine-id 必须是每台机器不同的**。启动之后它必然有值，所以判断标准不是「文件为空」，而是「两次部署值不同」。
+  **⚠️ 这里有个未验证的顺序问题**：`config.sh` 第 22-23 行 `rm -f` + `touch /etc/machine-id` 造出空文件，但描述文件的 `<packages type="delete">` 里也列了 `/etc/machine-id`，而 kiwi 的删除阶段在 `config.sh` **之后**执行（构建日志实测：08:04:14 config.sh → 08:04:17 uninstall）。两者谁赢取决于 `<file>` 在 delete 段里是否真的生效。详见 [kiwi-pitfalls.md](kiwi-pitfalls.md) 的「delete 在 config.sh 之后执行」一节。
+  启动后 `ls -l /etc/machine-id` 确认：存在且为空 → 删除没生效；不存在 → 删除生效、config.sh 被覆盖。
 - **`/etc/reinas/debug.conf` 不该存在于装好的系统里**。config.sh 读完就删。`ls /etc/reinas/` 只应看到 `BUILD-IS-DEBUG`（调试构建）或什么都没有（生产构建）。
 
 ---

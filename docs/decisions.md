@@ -153,7 +153,8 @@ Microsoft CA（固件 db 里）
 
 ### 背景
 
-`/Users/mouyase/Projects/my/ReiNAS/distro/` 里有一套基于 `mkksiso` + kickstart 的方案，已验证能出 ISO 并引导到 GRUB，但"完整装成系统"这一步因本地内存限制未验证。
+早期有一套基于 `mkksiso` + kickstart 的方案，已验证能出 ISO 并引导到 GRUB，但
+"完整装成系统"这一步未验证。该方案位于另一个仓库，不在本仓库内。
 
 ### 决策
 
@@ -174,9 +175,11 @@ Microsoft CA（固件 db 里）
 
 ### 旧方案里值得保留的东西
 
-`distro/rpm/reinas-release.spec` 里的兼容性设计（`system-release(releasever)` provide、`Obsoletes: fedora-release`、原样复制的 `macros.dist` 和 preset）经实践验证有效，已移植到 `packages/reinas-release/`。
-
-`distro/kickstart/reinas.ks` 里关于"NAS 不能自动清盘"的判断依然正确，在 kiwi 方案里体现为 `oem-resize` 只扩不删。
+1. **release 包的兼容性设计**——`system-release(releasever)` provide、
+   `Obsoletes: fedora-release`、原样复制的 `macros.dist` 和 preset。经实践验证
+   有效，已移植到 `packages/reinas-release/`。
+2. **"NAS 不能自动清盘"的判断**依然正确，在 kiwi 方案里体现为 `oem-resize`
+   只扩不删。
 
 ---
 

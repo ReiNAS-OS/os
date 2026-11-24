@@ -6,7 +6,7 @@
 
 | 制品 | 用途 | 怎么用 |
 |---|---|---|
-| `*.raw` | **dd 到磁盘**，首启自动撑满整盘 | `dd if=ReiNAS.raw of=/dev/sdX bs=4M status=progress conv=fsync` |
+| `*.raw` | **dd 到磁盘**，首启自动撑满整盘 | `xz -d *.raw.xz && dd if=*.raw of=/dev/sdX bs=4M status=progress conv=fsync` |
 | `*.install.iso` | **装机盘**，把 raw 部署到目标盘 | dd 到 U 盘，UEFI 启动，交互选择目标盘 |
 
 ---
@@ -52,11 +52,9 @@ CI 的 `构建镜像` workflow 也有对应的 `debug_password` 输入，留空�
 
 ## 为什么是 Fedora + kiwi
 
-**Fedora 自己就用 kiwi 造镜像**（[官方说明](https://fedoraproject.org/wiki/Building_a_Fedora)：*kiwi, used for most variants of Fedora*）。所以这不是绕路，是走上游同一条路：
-
-- Cloud 镜像（AWS/Azure/GCP/generic）、Vagrant、容器、WSL、绝大多数桌面 spin 的 live ISO 全是 kiwi 出的
-- 官方描述文件在 [forge.fedoraproject.org/releng/kiwi-descriptions](https://forge.fedoraproject.org/releng/kiwi-descriptions)，按版本分支（`f43`/`f44`/`f45`/`rawhide`）
-- Fedora 45 仓库里 `kiwi-cli` = **11.1.1-2.fc45**，全套 `kiwi-systemdeps-*` 齐全
+**一句话**：Fedora 自己就用 kiwi 造镜像，走的是上游同一条路，不是绕路。
+完整理由（仓库丰度对比、重品牌化政策、Secure Boot）和被否掉的 Leap / Arch /
+AlmaLinux，见 [docs/decisions.md](docs/decisions.md) D-001 与 D-004。
 
 **为什么用 `oem` 类型**：kiwi 的 image 类型里只有 `oem` 支持 `installiso="true"`，且自带首启扩盘（`dracut-kiwi-oem-repart`）。一份 raw 能 dd 到 128G SSD 也能 dd 到 8T HDD，首启自动撑满——这是 NAS 场景的刚需。
 
@@ -77,8 +75,7 @@ CI 的 `构建镜像` workflow 也有对应的 `debug_password` 输入，留空�
 os/
 ├── kiwi/
 │   ├── reinas.kiwi        # 镜像描述（唯一入口）
-│   ├── config.sh          # 镜像内 chroot 配置脚本
-│   └── root/              # overlay 树，按路径覆盖进镜像
+│   └── config.sh          # 镜像内 chroot 配置脚本
 ├── packages/
 │   └── reinas-release/    # 系统身份包（替代 fedora-release）
 │       ├── reinas-release.spec
@@ -146,14 +143,22 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 ## 升级到下一个 Fedora
 
-每年一次，改四处：
+每年一次，**改六处**：
 
-1. `kiwi/reinas.kiwi` → `<release-version>46</release-version>`
-2. `packages/reinas-release/reinas-release.spec` → `%global fedora_release 46`
-3. `packages/reinas-release/files/os-release` → `VERSION_ID` / `PLATFORM_ID` / `CPE_NAME`
-4. `packages/reinas-release/files/releasever` → `46`
+| # | 文件 | 改什么 |
+|---|---|---|
+| 1 | `kiwi/reinas.kiwi` | `<release-version>46</release-version>` |
+| 2 | `packages/reinas-release/reinas-release.spec` | `%global fedora_release 46` |
+| 3 | `packages/reinas-release/files/os-release` | `VERSION_ID` / `PLATFORM_ID` / `CPE_NAME` |
+| 4 | `packages/reinas-release/files/releasever` | `46` |
+| 5 | `packages/reinas-release/files/system-release-cpe` | 末段 `:46` |
+| 6 | `scripts/check-xml.py` | `FEDORA_RELEASE = "46"` |
 
 然后 `./scripts/build.sh --clean`。
+
+**漏了第 5、6 处的后果**：`system-release-cpe` 不跟着改，CPE 会指回旧版本；
+`check-xml.py` 的常量不改，`--online` 会拿旧版本的仓库元数据校验包名，
+新版本里新增的包会被误判为不存在。
 
 **不能直接 `dnf system-upgrade`**：因为你的 release 包叫 `reinas-release`，它 `Obsoletes: fedora-release`，Fedora 的升级路径不认这个。跨版本升级需要自己写迁移脚本（`dnf distro-sync` + 换 release 包），这在 0.3 之前不做。
 
@@ -166,10 +171,10 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 | 磁盘 | 15 GB |
 | 内存 | 8 GB（boxbuild 默认） |
 | CPU | 4 核 |
-| 时间 | 约 19 分钟（CI 实测） |
+| 时间 | 约 15 分钟（CI 实测 14m57s） |
 | 费用 | 0 |
 
-产物（CI 实测，构建 15 分钟）：
+产物（CI 实测）：
 
 | 文件 | 大小 | 用途 |
 |---|---|---|

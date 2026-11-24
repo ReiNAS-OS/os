@@ -1,0 +1,140 @@
+# kiwi 构建的坑
+
+从 `AGENTS.md` 挪过来的长尾细节。AGENTS.md 只留最容易踩的几条，其余在这里。
+
+---
+
+## 描述文件的四类静态错误
+
+这四类都是「构建跑到很晚才炸」，`scripts/check-xml.py` 会提前拦住：
+
+1. **XML 注释里不能有连续减号** — `--disable-plugin` 这类参数写进注释就炸。
+   踩过四次。
+2. **`<locale>` 不能带 `.UTF-8` 后缀** — 只认 `en_US`，写 `en_US.UTF-8` 报
+   `RELAXNG_ERR_INTEREXTRA: Extra element locale`。
+3. **`<packages>` 上不能有 `arch` 属性** — 只能写 `type` / `patternType` /
+   `profiles`。`arch` 要写具体的 `<package>` 上。报
+   `RELAXNG_ERR_INVALIDATTR: Invalid attribute arch for element packages`。
+4. **包名必须真实存在** — 用 `--online` 校验。漏包和拼错以前要等构建跑到最末尾
+   才暴露，白等十几分钟。
+
+### 另外三类 `check-xml.py` 也查
+
+5. **未转义的 `&`** — URL 里的查询串必须写成 `&amp;`。
+6. **整体可解析性** — XML 本身不合法时直接报错退出，不再往下查。
+7. **结构最小断言** — 根元素是 `<image>`、有 `name`、有 `<profile>`、
+   带 `profiles`/`arch` 的 `<preferences>` 必须有 `<type>`。
+
+`<packages type="image">` 没设 `patternType="onlyRequired"` 只打提示不报错。
+
+---
+
+## 包必须按 `type` 分三段写
+
+```xml
+<packages type="bootstrap">  <!-- 最小引导集，只放 filesystem -->
+<packages type="image">      <!-- 装进磁盘镜像 -->
+<packages type="iso">        <!-- 只装进 .install.iso 的构建环境 -->
+```
+
+`type="iso"` 段容易被整段忘掉。`grub2-efi-*-cdboot` 就在里面，缺了 ISO 的 UEFI
+引导是空的。对照 Fedora 官方 `components/boot.xml` 逐项比对。
+
+### bootstrap 只放 filesystem
+
+曾经试过加 `glibc` / `bash` / `coreutils` / `rpm` / `setup`，全部失败。rpm 维护者
+pmatilai 在 rpm#3691 的结论是这个早期集合极其脆弱，加包会破坏 rpm 本来能算出的
+顺序。
+
+但有一条例外要注意：RPM 的 `%pre` scriptlet 用 `/bin/sh` 执行，而 Fedora 的 `sh`
+由 bash 提供。历史上缺 bash 会让 `crypto-policies` 这类带 `%pre` 的包以 exit 127
+失败，而错误信息完全指不到真正原因（依赖环：crypto-policies → /bin/sh → bash →
+glibc → ...）。当前配置走官方单包写法，这个问题由 rpm 的拓扑排序兜住。
+
+---
+
+## 本地 rpm 仓库必须在 `kiwi/rpms/`
+
+boxbuild 只共享 `--description` 和 `--target-dir` 两个目录，仓库放别处构建箱看不到。
+描述文件里用 `this://./rpms` 引用，且必须 `createrepo_c` 生成元数据——只有 rpm
+文件会报：
+
+```
+Failed to download metadata (baseurl: "file:///description/rpms/")
+```
+
+不能用 `127.0.0.1:8888` 的 HTTP 服务，构建箱有独立网络命名空间。
+
+---
+
+## `root/` overlay 的实际行为
+
+`kiwi/` 目录下的 `root/` 是 kiwi 的 overlay 树：包装完之后整个目录按路径覆盖进
+镜像。当前**没有任何文件**，曾经有三个空目录（`etc/issue.d`、
+`etc/NetworkManager/dispatcher.d`、`etc/systemd/system`），已删除，因为：
+
+- 空目录不进 git，clone 下来根本不存在
+- 这三个目录的真实来源是包或 `config.sh`：
+  - `/etc/NetworkManager/dispatcher.d` ← `NetworkManager` 包提供
+  - `/etc/systemd/system` ← `systemd` 包提供
+  - `/etc/issue.d` ← `config.sh` 里 `mkdir -p`
+
+真要用 overlay 时新建即可，kiwi 会自动识别。
+
+---
+
+## `<packages type="delete">` 在 config.sh **之后**执行
+
+这是最容易搞反的顺序。仓库里观察到的实际顺序（CI 构建日志）：
+
+```
+08:04:14  Calling config.sh script
+08:04:15  Processing SELinux file security contexts
+08:04:17  Uninstalling system packages (chroot)
+08:04:17  Creating system image
+```
+
+kiwi 的 schema 注释也写明：`delete` packages are uninstalled **after the
+preparation phase is done**。
+
+**后果**：`config.sh` 里 touch 出来的文件，如果同名项写进了 `<packages
+type="delete">`，会被随后的删除阶段抹掉。当前描述文件里删的是
+`/etc/machine-id` 和 `/var/lib/systemd/random-seed`，而 `config.sh` 第 22-23 行
+正好 `rm -f` + `touch /etc/machine-id`。
+
+**待验证**：`<packages type="delete">` 里放 `<file>` 是否真的会被执行（kiwi
+的文档对 `type="delete"` 只描述了「卸载包」，`<file>` 的删除语义没有明确说明）。
+镜像启动后用 `ls -l /etc/machine-id` 确认：文件存在且为空 → 删除没生效；
+文件不存在 → 删除生效，config.sh 的 touch 被覆盖。见 `docs/testing.md`
+第 6 节。
+
+---
+
+## 环境陷阱
+
+- **`config.sh` 在 chroot 里跑，`systemctl enable` 可能非零退出。** kiwi 用
+  `set -e` 跑它，一条失败就整体中止。**每条都要 `|| true`。**
+- **`grub2-editenv` 在容器 overlay 上会失败**（拿不到真实块设备）：
+  `failed to get canonical path of 'overlay'`。直接写 1024 字节的 grubenv 块。
+- **`dracut` 的 `No '/dev/log' or 'logger'` 是 warning 不是错误**，退出码 0。
+  曾被这条误导过两轮。
+- **`Extended attributes not supported for target`** 是 fuse 文件系统的警告，
+  不影响产物。
+- **`Running fallback setup for shim secure boot efi image`** 是正常路径，
+  不是错误。
+
+---
+
+## RPM spec 注释里不能出现百分号
+
+RPM 会把注释里的 `%` 当宏展开，报 `Macro XXX has empty body`。踩过两次。
+`validate.yml` 有一步专门查这个。
+
+---
+
+## 为什么 kiwi 的行为和官方描述不一致时，先改自己
+
+D-006 里记着：过程中给 kiwi 打过 5 处源码补丁，事后验证全部无效——官方描述不加
+任何补丁也能推进到同一位置。补丁只让构建多跑十分钟。
+
+**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
