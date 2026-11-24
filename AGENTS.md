@@ -35,6 +35,8 @@ scripts/check-xml.py  描述文件静态检查
 scripts/smoke.sh      镜像内冒烟测试
 docs/decisions.md     技术决策记录，改架构前先读
 docs/kiwi-pitfalls.md kiwi 构建的坑：描述文件错误、执行顺序、环境陷阱
+docs/decisions-panel.md 面板相关决策（D-009 起）
+docs/image-size.md    镜像体积构成与压缩参数的实测结论
 docs/testing.md       QEMU 验证流程
 ```
 

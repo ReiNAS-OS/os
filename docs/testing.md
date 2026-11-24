@@ -96,17 +96,18 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | **扩盘生效** | `lsblk` + `df -h /` | 根分区 ≈ 40G，不是 8G |
 | 子卷布局 | `btrfs subvolume list /` | 有 `root` / `home` / `var` / `srv` |
 | SELinux | `getenforce` | `Enforcing` |
-| 服务 | `systemctl is-enabled sshd cockpit.socket` | 都是 `enabled` |
+| 服务 | `systemctl is-enabled sshd firewalld chronyd` | 都是 `enabled` |
 | 默认 target | `systemctl get-default` | `multi-user.target` |
 | machine-id 生成 | `cat /etc/machine-id` | 非空，且**每台机器不同** |
 | root 锁定 | `passwd -S root` | `L`（locked） |
 | root 密码状态 | `passwd -S root` | 开密码构建 `P`；生产构建 `L` |
 | reinas 始终锁定 | `passwd -S reinas` | 恒为 `L` |
 | 构建标记 | `ls /etc/reinas/BUILD-HAS-ROOT-PASSWORD` | 开密码构建存在；生产构建不存在 |
-| 登录提示 | 看 console | 显示 `ReiNAS management: https://<ip>:9090` |
+| 登录提示 | 看 console | 显示 `Web panel:
+ https://<ip>:5090`（面板未实现时访问会失败，正常） |
 | **Secure Boot** | `mokutil --sb-state` 或 `dmesg \| grep -i secure` | `SecureBoot enabled` |
 | dnf 可用 | `dnf repolist` | 能看到 `fedora` / `updates`，且 `$releasever` = 45 |
-| 关键包在 | `rpm -q reinas-release samba nfs-utils cockpit podman` | 全部已安装 |
+| 关键包在 | `rpm -q reinas-release samba nfs-utils btrfs-progs` | 全部已安装 |
 
 **最容易被忽略的三项**：
 
