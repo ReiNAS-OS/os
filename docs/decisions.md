@@ -321,3 +321,110 @@ build.sh --debug-password
   元字符不展开 / 换行被拒
 
 `kiwi/debug.conf` 在 `.gitignore` 里，且可能含明文密码，绝不入库。
+
+---
+
+## D-008：默认跟最新，用锁文件复现
+
+**日期**：2026-11-24
+**状态**：已决定
+
+### 背景
+
+描述文件里的 `<package>` 只写包名，不写版本。三个仓库（`fedora` /
+`updates` / `reinas`）都是浮动源，`dnf-defaults.conf` 里也没有 `exclude`。
+
+**后果**：同一份代码，今天构建和下周构建装出的东西不一样。
+
+实测差距（Fedora 45 的 `releases/45` 冻结快照 vs `updates/45` 滚动）：
+
+| 包 | releases/45 | updates/45 |
+|---|---|---|
+| kernel-core | 7.2.11-300.fc45 | 7.3.4-300.fc45 |
+| systemd | 262-3.fc45 | 262.1-1.fc45 |
+| glibc | 2.44-1.fc45 | 2.44-2.fc45 |
+| cockpit | 368-1.fc45 | 372-1.fc45 |
+
+还有 `metalink` 的隐藏变量：落到哪台 mirror、那台是否已同步，也会影响结果。
+
+### 决策
+
+**默认不锁，构建时吃最新；需要复现时用锁文件。**
+
+```bash
+./scripts/build.sh --lock-out            # 构建，并把实际装到的版本导出成 out/*.lock
+./scripts/build.sh --lock path/to.lock   # 按锁文件复现
+```
+
+### 为什么是这个方向
+
+**不默认锁定**：NAS 长期在线，镜像带当时最新的安全补丁有实际价值。默认锁死会让
+用户拿到一个出生即过期的系统。
+
+**但必须能复现**：出问题时要知道「是代码改坏了，还是上游包更新了」，就得能装回
+同一批版本。
+
+**不自己维护版本号**：锁文件是 `--lock-out` 从一次成功构建里**生成**的，不是人手写
+的。用的时候也不用改 `reinas.kiwi`。
+
+### 实现要点
+
+**1. 锁文件格式**
+
+沿用 kiwi 自己导出的 `.packages` 的同构格式（`NAME|EPOCH|VERSION|RELEASE|ARCH|
+DISTURL|LICENSE`），裁成三列：
+
+```
+# ReiNAS 版本锁文件
+samba|4.25.1|1.fc45|x86_64
+kernel-core|7.3.4|300.fc45|x86_64
+```
+
+只含 `<packages type="image">` 里**显式列出的 87 个包**，不含依赖闭包。理由：显式包
+版本一钉，dnf 会把依赖解析到能满足它们的版本上；锁全量的话锁文件会变成几百行，且
+与每年 Fedora 升级严重耦合。
+
+**2. 不改 `reinas.kiwi` 本体**
+
+`--lock` 时派生一个 `kiwi/reinas.locked.kiwi`，把每个 `<package name="x"/>` 换成
+`<package name="x-版本-发布.arch"/>`。原文件保持「跟最新」的真相，派生文件用完即弃
+（已在 `.gitignore`）。
+
+**3. dnf5 支持 NEVRA，不需要 versionlock 插件**
+
+kiwi 的 `<package name>` 是 `xsd:text`，原样传给包管理器。dnf5 官方文档明确支持
+`dnf5 install tito-0.6.21-1.fc36` 这种精确版本语法，且会主动升降到该版本。
+
+**Fedora 45 没有 dnf5 版 versionlock**（只有 dnf4 的
+`python3-dnf-plugin-versionlock`），所以不能走 versionlock 那条路。
+
+**4. 必须显式 `--kiwi-file`**
+
+kiwi 找描述文件时对 `*.kiwi` 做 glob 然后 `sorted()` 取**第一个**：
+
+```python
+glob_match = description_directory + '/*.kiwi'
+for kiwi_file in sorted(glob.iglob(glob_match)):
+    config_file = kiwi_file
+    break
+```
+
+`sorted()` 下 `reinas.locked.kiwi` 排在 `reinas.kiwi` **前面**，不指定就会静默用错
+文件。所以锁定构建必须传 `--kiwi-file reinas.locked.kiwi`（boxbuild 会透传这个全局
+选项）。
+
+**5. 锁文件不入库、CI 不提交代码**
+
+这一点是关键约束：构建跑在 GitHub Actions 上，如果 CI 把锁文件提交回仓库，就会
+和「push 触发构建」形成循环，而且 CI 拿着写权限改代码本身是坏设计。
+
+所以锁文件只作为**构建产物**跟着镜像一起分发。拿到的 `.lock` 由使用者手动
+`--lock` 指过去。
+
+### 已知限制
+
+- **只锁显式包**。依赖闭包不锁，所以严格来说不是逐字节复现。若某个依赖在两次
+  构建之间发布了新版本且仍满足约束，装到的依赖版本会不同。要彻底复现得锁全量。
+- **锁文件里的版本必须还在仓库里**。Fedora 的 `updates` 会清理旧版本包，几个月后
+  拿老锁文件可能装不上。这时的表现是 dnf 报「找不到该版本」，而不是静默装新版。
+- **`reinas-release` 不在锁文件里**（它是自建包，版本由 spec 控制）。

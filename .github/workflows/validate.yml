@@ -124,6 +124,49 @@ jobs:
           fi
           echo "  ✓ 含换行的密码被拒绝"
 
+      - name: 检查版本锁定链路完整
+        run: |
+          # D-008：默认跟最新，--lock-out 导出锁文件、--lock 用锁文件复现。
+          # 这里守住几个容易改坏的点。
+          fail=0
+
+          # 1. check-xml.py 必须能吐显式包列表（gen_lock 依赖它）
+          n=$(python3 scripts/check-xml.py --list-explicit kiwi/reinas.kiwi | wc -l | tr -d " ")
+          if [ "$n" -lt 50 ]; then
+            echo "  ✗ --list-explicit 只返回 $n 个包，gen_lock 会生成残缺锁文件"
+            fail=1
+          else
+            echo "  ✓ --list-explicit 返回 $n 个显式包"
+          fi
+
+          # 2. 锁定构建必须显式 --kiwi-file。
+          #    kiwi 对 *.kiwi 做 glob 后 sorted 取第一个，
+          #    reinas.locked.kiwi 排在 reinas.kiwi 前面，不指定就用错文件。
+          if ! grep -q 'kiwi-file' scripts/build.sh; then
+            echo "  ✗ build.sh 没有 --kiwi-file，锁定构建会静默用错描述文件"
+            fail=1
+          else
+            echo "  ✓ --lock 时显式传 --kiwi-file"
+          fi
+
+          # 3. 派生描述不能入库
+          if ! grep -q 'reinas.locked.kiwi' .gitignore; then
+            echo "  ✗ reinas.locked.kiwi 没进 .gitignore"
+            fail=1
+          else
+            echo "  ✓ 派生描述已忽略"
+          fi
+
+          # 4. 锁文件本身也不入库
+          if git ls-files --error-unmatch 'kiwi/*.lock' >/dev/null 2>&1; then
+            echo "  ✗ 锁文件被提交进版本库了（D-008 要求只作为产物分发）"
+            fail=1
+          else
+            echo "  ✓ 锁文件不入库"
+          fi
+
+          if [ "$fail" != 0 ]; then exit 1; fi
+
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
           # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。

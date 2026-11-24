@@ -21,6 +21,9 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 公钥、镜像里也没预置公钥 —— 装完进不去。验证阶段必须加 `--debug-password`。
 开关打开产出的镜像不要对外发布。
 
+**版本默认跟最新**（D-008）。每次构建吃仓库最新包，不可复现。CI 会导出
+`out/*.lock` 分发，复现用 `--lock <file>`。锁文件不入库、CI 不提交代码。
+
 ## 目录
 
 ```

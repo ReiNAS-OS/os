@@ -209,7 +209,36 @@ def report(errs) -> int:
     return 0
 
 
+def list_explicit(path: Path) -> list:
+    """列出 <packages type="image"> 里显式声明的包名。
+
+    给 build.sh --lock-out 用：锁文件只该包含我们主动声明过的包，
+    不该把整个依赖闭包也写进去。
+    glob（iwl* 之类）跳过 —— 它们没法按名字匹配到具体 NEVRA。
+    """
+    root = ET.fromstring(path.read_text(encoding="utf-8"))
+    names = []
+    for sec in root.findall('.//packages[@type="image"]'):
+        for pkg in sec.findall("package"):
+            n = pkg.get("name")
+            if not n or any(c in n for c in "*?["):
+                continue
+            names.append(n)
+    return names
+
+
 if __name__ == "__main__":
+    # --list-explicit：只输出显式包名，一行一个，给 build.sh 用
+    if "--list-explicit" in sys.argv:
+        args = [a for a in sys.argv[1:] if not a.startswith("--")]
+        target = Path(args[0] if args else "kiwi/reinas.kiwi")
+        try:
+            print("\n".join(list_explicit(target)))
+        except Exception as e:
+            print(f"  ✗ 读不到显式包列表: {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     online = "--online" in sys.argv
     targets = [Path(p) for p in (args or ["kiwi/reinas.kiwi"])]

@@ -43,6 +43,22 @@ CI 的 `构建镜像` workflow 也有对应的 `debug_password` 输入，留空�
 为什么不默认给密码 —— 以及「关闭态其实进不去」这个待解的缺口，见
 [docs/decisions.md](docs/decisions.md) D-007。
 
+### 版本锁定（默认跟最新）
+
+默认每次构建都**吃仓库最新版本** —— 同一份代码不同时间构建，装到的包不一样。
+
+CI 每次构建会导出 `out/*.lock`（作为 `reinas-lock` artifact 分发，保留 90 天），
+记录这次实际装到的版本。要复现某次构建：
+
+```bash
+# 从 CI 下载 reinas-lock，解压出 ReiNAS-Disk.lock
+sudo ./scripts/build.sh --lock /path/to/ReiNAS-Disk.lock
+```
+
+锁文件**不入库**，只跟着镜像分发。原因和限制见
+[docs/decisions.md](docs/decisions.md) D-008。只锁显式列出的 87 个包，依赖仍跟随
+仓库解析 —— 不是逐字节复现。
+
 ### 环境要求
 
 真 Fedora 主机或 GitHub Actions runner 可以构建；macOS 和 Docker 容器不行。
