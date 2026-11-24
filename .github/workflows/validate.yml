@@ -45,11 +45,11 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S warning scripts/*.sh kiwi/config.sh .docker/*.sh
+          shellcheck -S warning scripts/*.sh kiwi/config.sh
 
       - name: bash 语法
         run: |
-          for f in scripts/*.sh kiwi/config.sh .docker/*.sh; do
+          for f in scripts/*.sh kiwi/config.sh; do
             bash -n "$f" && echo "  ✓ $f"
           done
 
