@@ -12,7 +12,7 @@ sudo dnf install -y qemu-kvm qemu-img edk2-ovmf virt-install
 
 `edk2-ovmf` 提供 UEFI 固件，验证 Secure Boot 必需。
 
-### 0.1 构建时打开调试账号
+### 0.1 构建时打开 root 密码
 
 **必须做这一步，否则下文所有检查都进不去。** 默认构建出来的镜像：
 
@@ -22,11 +22,10 @@ sudo dnf install -y qemu-kvm qemu-img edk2-ovmf virt-install
 结果是串口能看到登录提示，但没有可用的凭据。见 decisions.md D-007。
 
 ```bash
-sudo ./scripts/build.sh --debug-password     # reinas / 123456
+sudo ./scripts/build.sh --root-password     # root / 123456
 ```
 
-打开后 `reinas` 账号可以密码登录（在 `wheel` 组，能 `sudo`）。验证脚本
-`scripts/smoke.sh` 也要以 root 跑，登录后 `sudo -i` 即可。
+打开后直接以 `root` 密码登录，`scripts/smoke.sh` 也就能直接跑。
 
 ---
 
@@ -92,7 +91,7 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | 检查 | 命令（在启动后的系统里） | 期望 |
 |---|---|---|
 | 系统起来了 | — | 登录提示出现 |
-| **能登录** | 控制台输入 `reinas` / `123456` | 进入 shell（仅 `--debug-password` 构建） |
+| **能登录** | 控制台输入 `root` / `123456` | 进入 shell（仅 `--root-password` 构建） |
 | 身份正确 | `cat /etc/os-release` | `NAME="ReiNAS"`、`VERSION="0.1.0"` |
 | **扩盘生效** | `lsblk` + `df -h /` | 根分区 ≈ 40G，不是 8G |
 | 子卷布局 | `btrfs subvolume list /` | 有 `root` / `home` / `var` / `srv` |
@@ -101,8 +100,9 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | 默认 target | `systemctl get-default` | `multi-user.target` |
 | machine-id 生成 | `cat /etc/machine-id` | 非空，且**每台机器不同** |
 | root 锁定 | `passwd -S root` | `L`（locked） |
-| 调试账号状态 | `passwd -S reinas` | 调试构建 `P`；生产构建 `L` |
-| 调试标记 | `ls /etc/reinas/BUILD-IS-DEBUG` | 调试构建存在；生产构建不存在 |
+| root 密码状态 | `passwd -S root` | 开密码构建 `P`；生产构建 `L` |
+| reinas 始终锁定 | `passwd -S reinas` | 恒为 `L` |
+| 构建标记 | `ls /etc/reinas/BUILD-HAS-ROOT-PASSWORD` | 开密码构建存在；生产构建不存在 |
 | 登录提示 | 看 console | 显示 `ReiNAS management: https://<ip>:9090` |
 | **Secure Boot** | `mokutil --sb-state` 或 `dmesg \| grep -i secure` | `SecureBoot enabled` |
 | dnf 可用 | `dnf repolist` | 能看到 `fedora` / `updates`，且 `$releasever` = 45 |
@@ -114,7 +114,7 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 - **machine-id 必须是每台机器不同的**。启动之后它必然有值，所以判断标准不是「文件为空」，而是「两次部署值不同」。
   **⚠️ 这里有个未验证的顺序问题**：`config.sh` 第 22-23 行 `rm -f` + `touch /etc/machine-id` 造出空文件，但描述文件的 `<packages type="delete">` 里也列了 `/etc/machine-id`，而 kiwi 的删除阶段在 `config.sh` **之后**执行（构建日志实测：08:04:14 config.sh → 08:04:17 uninstall）。两者谁赢取决于 `<file>` 在 delete 段里是否真的生效。详见 [kiwi-pitfalls.md](kiwi-pitfalls.md) 的「delete 在 config.sh 之后执行」一节。
   启动后 `ls -l /etc/machine-id` 确认：存在且为空 → 删除没生效；不存在 → 删除生效、config.sh 被覆盖。
-- **`/etc/reinas/debug.conf` 不该存在于装好的系统里**。config.sh 读完就删。`ls /etc/reinas/` 只应看到 `BUILD-IS-DEBUG`（调试构建）或什么都没有（生产构建）。
+- **`/etc/reinas/root.conf` 不该存在于装好的系统里**。config.sh 读完就删。`ls /etc/reinas/` 只应看到 `BUILD-HAS-ROOT-PASSWORD`（开密码构建）或什么都没有（生产构建）。
 
 ---
 

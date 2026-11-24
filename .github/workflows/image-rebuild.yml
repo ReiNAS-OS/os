@@ -29,8 +29,8 @@ on:
         description: "kiwi profile"
         default: "Disk"
         type: string
-      debug_password:
-        description: "调试账号密码（留空=关闭调试账号，生产形态）"
+      root_password:
+        description: "root 密码（留空=锁定 root，生产形态）"
         default: ""
         type: string
 
@@ -88,7 +88,7 @@ jobs:
         uses: ./.github/actions/build-image
         with:
           profile: ${{ inputs.profile || 'Disk' }}
-          debug-password: ${{ inputs.debug_password || '' }}
+          root-password: ${{ inputs.root_password || '' }}
           lock-file: .lock/reinas.lock
 
       - name: 对比锁文件与实际产物
