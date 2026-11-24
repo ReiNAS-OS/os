@@ -21,24 +21,27 @@ sudo ./scripts/build.sh --deps         # 只装依赖
 sudo ./scripts/build.sh --rpm-only     # 只编译 reinas-release
 ./scripts/build.sh --list-boxes        # 查看可用构建箱
 
-sudo ./scripts/build.sh --debug-password   # 调试构建：reinas / 123456
+sudo ./scripts/build.sh --root-password    # 开发构建：root / 123456
 ```
 
 产物在 `out/`。
 
-### 调试账号（默认关闭）
+### root 密码（默认关闭）
 
 默认构建出来的镜像**没有任何口令，SSH 只认公钥，而镜像里也没有公钥** ——
-装完进不去。要在验证阶段登录，必须显式打开调试开关：
+装完进不去。要在开发阶段登录，必须显式打开开关：
 
 ```bash
-sudo ./scripts/build.sh --debug-password        # reinas / 123456
-sudo ./scripts/build.sh --debug-password=自定义  # 换一个密码
+sudo ./scripts/build.sh --root-password        # root / 123456
+sudo ./scripts/build.sh --root-password=自定义  # 换一个密码
 ```
 
-开关打开时：`reinas` 账号（在 `wheel` 组）设了初始密码、SSH 放开密码登录，
-镜像里会留下 `/etc/reinas/BUILD-IS-DEBUG` 标记。**这种镜像不要对外发布。**
-CI 的 `构建镜像` workflow 也有对应的 `debug_password` 输入，留空即关闭。
+开关打开时：`root` 设了密码、SSH 放开 root 密码登录（`PermitRootLogin yes` +
+`PasswordAuthentication yes`），镜像里会留下
+`/etc/reinas/BUILD-HAS-ROOT-PASSWORD` 标记。`reinas` 应急账号始终锁定。
+
+**这种镜像不要对外发布。** CI 的 `构建镜像` workflow 有对应的 `root_password`
+输入，留空即关闭。
 
 为什么不默认给密码 —— 以及「关闭态其实进不去」这个待解的缺口，见
 [docs/decisions.md](docs/decisions.md) D-007。

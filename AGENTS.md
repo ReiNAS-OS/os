@@ -9,7 +9,7 @@
 
 ```bash
 sudo ./scripts/build.sh                   # 完整构建（生产形态，无已知口令）
-sudo ./scripts/build.sh --debug-password  # 调试构建：reinas / 123456
+sudo ./scripts/build.sh --root-password   # 开发构建：root / 123456
 sudo ./scripts/build.sh --rpm-only        # 只编译 reinas-release
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 ```
@@ -17,8 +17,8 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 构建需要完整 Linux 宿主（KVM + loop + udev）。**macOS 和 Docker 容器都不行**，
 原因见 `docs/decisions.md` D-006。CI 用 GitHub Actions 的 `ubuntu-latest`。
 
-**调试账号默认关闭**（D-007）。不开开关构建出来的镜像没有任何口令、SSH 只认
-公钥、镜像里也没预置公钥 —— 装完进不去。验证阶段必须加 `--debug-password`。
+**root 密码默认关闭**（D-007）。不开开关构建出来的镜像没有任何口令、SSH 只认
+公钥、镜像里也没预置公钥 —— 装完进不去。开发阶段必须加 `--root-password`。
 开关打开产出的镜像不要对外发布。
 
 **版本默认跟最新**（D-008）。每次构建吃仓库最新包，不可复现。CI 会导出
@@ -30,7 +30,7 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 kiwi/reinas.kiwi      镜像描述，唯一入口。改包、改分区、改引导都在这里
 kiwi/config.sh        镜像内 chroot 配置：身份、账号、服务、防火墙、SELinux
 packages/             自建 RPM（reinas-release 替代 fedora-release）
-scripts/build.sh      构建入口（--debug-password 开关在这里）
+scripts/build.sh      构建入口（--root-password / --lock 开关在这里）
 scripts/check-xml.py  描述文件静态检查
 scripts/smoke.sh      镜像内冒烟测试
 docs/decisions.md     技术决策记录，改架构前先读

@@ -39,86 +39,92 @@ jobs:
           fi
           echo "  ✓ 无编译产物"
 
-      - name: 确认调试账号默认关闭
+      - name: 确认 root 密码默认关闭
         run: |
-          # D-007：调试账号（reinas 初始密码）只能由显式开关打开。
-          # 这里守住三件事，防止它被改成「一直是开的」。
+          # D-007：root 密码只能由显式开关打开，默认必须锁定。
+          # 这里守住四件事，防止它被改成「一直是开的」。
           fail=0
 
-          # 1. 描述文件里必须带 debug.conf，否则开关就断了
-          if ! grep -q 'name="debug.conf"' kiwi/reinas.kiwi; then
-            echo "  ✗ reinas.kiwi 里缺少 debug.conf 的 <file> 条目，调试开关已失效"
+          # 1. 描述文件里必须带 root.conf，否则开关就断了
+          if ! grep -q 'name="root.conf"' kiwi/reinas.kiwi; then
+            echo "  ✗ reinas.kiwi 里缺少 root.conf 的 <file> 条目，开关已失效"
             fail=1
           fi
 
-          # 2. build.sh 里相对这个变量的判断必须是「非空才开」
-          if ! grep -q 'if \[ -n "\$DEBUG_PASSWORD" \]' scripts/build.sh; then
-            echo "  ✗ build.sh 里没有 'if [ -n \"\$DEBUG_PASSWORD\" ]' 这个守卫"
+          # 2. build.sh 里的守卫必须是「非空才开」
+          if ! grep -q 'if \[ -n "\$ROOT_PASSWORD" \]' scripts/build.sh; then
+            echo "  ✗ build.sh 里没有 'if [ -n \"\$ROOT_PASSWORD\" ]' 这个守卫"
             fail=1
           fi
 
-          # 3. config.sh 必须同时存在「有密码 → 开」和「无密码 → 清掉配置」两条路
-          if ! grep -q 'rm -f /etc/reinas/debug.conf' kiwi/config.sh; then
-            echo "  ✗ config.sh 没有清掉 debug.conf 的分支，明文密码会留在镜像里"
+          # 3. config.sh 必须两个分支都清掉 root.conf，明文密码不能留镜像里
+          if ! grep -q 'rm -f /etc/reinas/root.conf' kiwi/config.sh; then
+            echo "  ✗ config.sh 没有清掉 root.conf，明文密码会留在镜像里"
             fail=1
           fi
 
-          # 4. 调试密码文件本身不入库
-          if git ls-files --error-unmatch kiwi/debug.conf >/dev/null 2>&1; then
-            echo "  ✗ kiwi/debug.conf 被提交进版本库了"
+          # 4. 生产分支必须锁定 root
+          if ! grep -q 'passwd -l root' kiwi/config.sh; then
+            echo "  ✗ config.sh 没有 passwd -l root，生产形态下 root 没被锁定"
+            fail=1
+          fi
+
+          # 5. 密码文件本身不入库
+          if git ls-files --error-unmatch kiwi/root.conf >/dev/null 2>&1; then
+            echo "  ✗ kiwi/root.conf 被提交进版本库了"
             fail=1
           fi
 
           if [ "$fail" != 0 ]; then exit 1; fi
-          echo "  ✓ 调试账号默认关闭，开关链路完整"
+          echo "  ✓ root 密码默认关闭，开关链路完整"
 
-      - name: 检查调试开关的实际行为
+      - name: 检查 root 密码开关的实际行为
         run: |
           # 真跑一遍 build.sh 的开关逻辑，两种状态都验。
           tmp=$(mktemp -d)
           cd "$tmp"
-          # 只截取 write_debug_conf 的逻辑，不启动构建
-          cat > probe.sh <<'EOF'
+          # 只截取 write_root_conf 的逻辑，不启动构建
+          cat > probe.sh <<'PROBE'
           set -euo pipefail
           die() { echo "$*" >&2; exit 1; }
-          write_debug_conf() {
-              local conf="$1/debug.conf"
-              if [ -n "$DEBUG_PASSWORD" ]; then
-                  case "$DEBUG_PASSWORD" in
-                      *$'\n'*) die "调试密码不能含换行" ;;
+          write_root_conf() {
+              local conf="$1/root.conf"
+              if [ -n "$ROOT_PASSWORD" ]; then
+                  case "$ROOT_PASSWORD" in
+                      *$'\n'*) die "root 密码不能含换行" ;;
                   esac
-                  printf '%s\n' "$DEBUG_PASSWORD" > "$conf"
+                  printf '%s\n' "$ROOT_PASSWORD" > "$conf"
               else
                   : > "$conf"
               fi
           }
-          EOF
-          source probe.sh
+          PROBE
+          . probe.sh
 
           # 关闭态：空文件
-          DEBUG_PASSWORD=""
-          write_debug_conf "$tmp"
-          test ! -s "$tmp/debug.conf" || { echo "  ✗ 关闭态应生成空文件"; exit 1; }
-          echo "  ✓ 关闭态：debug.conf 为空"
+          ROOT_PASSWORD=""
+          write_root_conf "$tmp"
+          test ! -s "$tmp/root.conf" || { echo "  ✗ 关闭态应生成空文件"; exit 1; }
+          echo "  ✓ 关闭态：root.conf 为空"
 
           # 开启态：正好是密码 + 换行
-          DEBUG_PASSWORD=123456
-          write_debug_conf "$tmp"
-          test "$(cat "$tmp/debug.conf")" = "123456" \
+          ROOT_PASSWORD=123456
+          write_root_conf "$tmp"
+          test "$(cat "$tmp/root.conf")" = "123456" \
             || { echo "  ✗ 开启态写出的密码不对"; exit 1; }
-          echo "  ✓ 开启态：debug.conf 内容正确"
+          echo "  ✓ 开启态：root.conf 内容正确"
 
           # 元字符不被展开
-          DEBUG_PASSWORD='a$b`c"d'
-          write_debug_conf "$tmp"
-          REINAS_DEBUG_PASSWORD=""
-          IFS= read -r REINAS_DEBUG_PASSWORD < "$tmp/debug.conf"
-          test "$REINAS_DEBUG_PASSWORD" = 'a$b`c"d' \
+          ROOT_PASSWORD='a$b`c"d'
+          write_root_conf "$tmp"
+          REINAS_ROOT_PASSWORD=""
+          IFS= read -r REINAS_ROOT_PASSWORD < "$tmp/root.conf"
+          test "$REINAS_ROOT_PASSWORD" = 'a$b`c"d' \
             || { echo "  ✗ 元字符密码读取不一致"; exit 1; }
           echo "  ✓ 元字符密码不被 shell 展开"
 
           # 换行被拒
-          if ( DEBUG_PASSWORD=$'x\ny'; write_debug_conf "$tmp" ) 2>/dev/null; then
+          if ( ROOT_PASSWORD=$'x\ny'; write_root_conf "$tmp" ) 2>/dev/null; then
             echo "  ✗ 含换行的密码应被拒绝"
             exit 1
           fi
@@ -227,6 +233,50 @@ jobs:
 
           if [ "$fail" != 0 ]; then exit 1; fi
           echo "  ✓ 结构正确：3 个 workflow，构建逻辑只有一份"
+
+      - name: 检查登录提示只用物理屏安全字符
+        run: |
+          # 登录提示要能在物理 VGA/VBE 控制台显示，所以：
+          #   - 只能 ASCII（CJK 在 VGA 字体里缺字形，会显示成空白/问号）
+          #   - 只能 ANSI 16 色 SGR（256 色/真彩色物理屏不支持）
+          #
+          # 用 python 而不是 grep/sed：BSD 与 GNU 工具对「非 ASCII / 非 printable」
+          # 的处理不一致（macOS 的 grep 没有 -P，sed 在 UTF-8 locale 下会把中文
+          # 当 printable 删掉），跨平台只有直接看字节可靠。
+          python3 - <<'PYEOF'
+          import re
+          import sys
+
+          src = open('kiwi/config.sh', encoding='utf-8').read()
+          m = re.search(
+              r"cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'\n(.*?)\nISSUEEOF",
+              src, re.S,
+          )
+          if not m:
+              sys.exit('  ✗ 找不到 reinas-issue-update 脚本')
+          body = m.group(1)
+
+          fail = 0
+          # 逐行检查，跳过注释行
+          for i, line in enumerate(body.split('\n'), 1):
+              if line.lstrip().startswith('#'):
+                  continue
+              for ch in line:
+                  if ord(ch) > 0x7F:
+                      print(f'  ✗ 第 {i} 行含非 ASCII 字符 {ch!r}'
+                            f'（物理控制台无法显示）')
+                      fail = 1
+                      break
+
+          # 256 色（38;5;n / 48;5;n）与真彩色（38;2;r;g;b）
+          if re.search(r'\\033\[(38|48);[25];', body):
+              print('  ✗ 用了 256 色或真彩色，物理控制台只支持 16 色')
+              fail = 1
+
+          if fail:
+              sys.exit(1)
+          print('  ✓ 登录提示只用 ASCII + ANSI 16 色')
+          PYEOF
 
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |

@@ -23,8 +23,8 @@ inputs:
     description: "锁文件路径（相对仓库根）。非空时按它复现构建。"
     required: false
     default: ""
-  debug-password:
-    description: "调试账号密码。留空 = 关闭（生产形态）"
+  root-password:
+    description: "root 密码。留空 = 锁定 root（生产形态）"
     required: false
     default: ""
 
@@ -80,14 +80,14 @@ runs:
     - name: 构建镜像
       shell: bash
       env:
-        DEBUG_PASSWORD: ${{ inputs.debug-password }}
+        ROOT_PASSWORD: ${{ inputs.root-password }}
         PROFILE: ${{ inputs.profile }}
         LOCK_OUT: ${{ inputs.lock-out }}
         LOCK_FILE: ${{ inputs.lock-file }}
       run: |
         set -o pipefail
-        if [ -n "$DEBUG_PASSWORD" ]; then
-          echo "::warning::本次构建开启了调试账号，产物不可对外发布"
+        if [ -n "$ROOT_PASSWORD" ]; then
+          echo "::warning::本次构建启用了 root 密码登录，产物不可对外发布"
         fi
 
         # 组装 build.sh 的参数
@@ -103,7 +103,7 @@ runs:
         # 用 sudo env 把变量塞进 chroot 的环境，而不是拼进 bash -c 的字符串：
         # 密码里带引号、$ 或空格时不会把命令拆坏。
         # chroot 里的变量用位置参数传，避免二次展开。
-        sudo env DEBUG_PASSWORD="$DEBUG_PASSWORD" PROFILE="$PROFILE" \
+        sudo env ROOT_PASSWORD="$ROOT_PASSWORD" PROFILE="$PROFILE" \
           chroot /mnt/fedora /bin/bash -c '
             set -e
             cd /work

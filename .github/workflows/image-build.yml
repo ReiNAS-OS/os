@@ -6,6 +6,11 @@ name: 构建镜像
 #
 # 文件名保持英文（image-build.yml），显示名是中文。
 
+# 只在手动触发时构建。
+#
+# 不挂 push：构建要跑 15 分钟且吃满 runner，push 触发等于每次改文档都白跑
+# 一轮；而且默认产出的是「无口令、进不去」的生产形态镜像，自动构建没有
+# 实际用途。需要镜像时手动点。
 on:
   workflow_dispatch:
     inputs:
@@ -13,18 +18,10 @@ on:
         description: "kiwi profile"
         default: "Disk"
         type: string
-      debug_password:
-        description: "调试账号密码（留空=关闭调试账号，生产形态）"
+      root_password:
+        description: "root 密码（留空=锁定 root，生产形态）"
         default: ""
         type: string
-  push:
-    branches: [main]
-    paths:
-      - "kiwi/**"
-      - "packages/**"
-      - "scripts/**"
-      - ".github/actions/build-image/**"
-      - ".github/workflows/image-build.yml"
 
 jobs:
   build:
@@ -40,7 +37,7 @@ jobs:
         uses: ./.github/actions/build-image
         with:
           profile: ${{ inputs.profile || 'Disk' }}
-          debug-password: ${{ inputs.debug_password || '' }}
+          root-password: ${{ inputs.root_password || '' }}
           # 始终导出锁文件：把这次实际装到的版本记下来，作为产物一起分发。
           # 想复现时用「锁定重建」workflow 拿它重建（D-008）。
           lock-out: "1"
