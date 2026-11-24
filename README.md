@@ -56,7 +56,7 @@ sudo ./scripts/build.sh --lock /path/to/ReiNAS-Disk.lock
 ```
 
 锁文件**不入库**，只跟着镜像分发。原因和限制见
-[docs/decisions.md](docs/decisions.md) D-008。只锁显式列出的 87 个包，依赖仍跟随
+[docs/decisions.md](docs/decisions.md) D-008。只锁显式列出的 86 个包，依赖仍跟随
 仓库解析 —— 不是逐字节复现。
 
 ### 环境要求
