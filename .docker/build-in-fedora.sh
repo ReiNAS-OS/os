@@ -168,23 +168,16 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 echo "=== 生成镜像 ==="
-# bootstrap 阶段显式加 setup。
-# 原因：glibc / bash / filesystem / setup 之间有一个极其脆弱的依赖环，
-# rpm 上游 issue #3691 和 kiwi issue #2743 都记录了它：
-#   crypto-policies 的 %pre 要 /bin/sh
-#   /bin/sh 是 filesystem 的 %post 建的软链接
-#   filesystem 依赖 setup，setup 又需要 shell
-# 环的存在让 rpm 无法算出正确顺序，最终在 crypto-policies 的 %pre
-# 以 exit 127 失败。rpm 维护者的结论是「打包层面解决，把其中的包
-# 显式提到早期集合里」。setup 是关键的那一个。
+# bootstrap 只放 filesystem，与 Fedora 官方描述一致。
+# 曾经试过往 bootstrap 里加 glibc/bash/coreutils/rpm/setup，全都失败——
+# rpm 维护者 pmatilai 在 rpm#3691 里说得明确：
+#   "the bash-setup-glibc-filesystem-etc early bootstrap set is particularly
+#    delicate. Adding a new package into the mix can throw off the balance."
+# 加进去反而破坏了 rpm 本来能算出的顺序。
 kiwi-ng --debug --type oem --profile "${PROFILE:-Disk}" --logfile "$BUILD_DIR/kiwi-build.log" \
     system build \
     --description /work/kiwi \
-    --target-dir "$BUILD_DIR" \
-    --add-bootstrap-package setup \
-    --add-bootstrap-package filesystem \
-    --add-bootstrap-package glibc \
-    --add-bootstrap-package bash
+    --target-dir "$BUILD_DIR"
 
 echo "=== 回传产物 ==="
 mkdir -p /work/out
