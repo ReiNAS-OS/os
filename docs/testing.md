@@ -178,7 +178,7 @@ chk "dnf仓库"    "dnf repolist 2>/dev/null | wc -l"       ''
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 完整构建 | ✅ | CI 已成功产出 `.raw` 和 `.install.iso`（627 MB / `.raw.xz`） |
+| 完整构建 | ✅ | CI 成功，产物已作为 artifact 上传（`.raw.xz` 626 MB、`.install.iso` 863 MB） |
 | 镜像能启动 | ⏳ | 产物已出，尚未在 QEMU 里跑过 |
 | 扩盘在真机上生效 | ⏳ | 目前只在 QEMU 测 |
 | Secure Boot 真机启动 | ⏳ | 需 OVMF + 真机双验证 |
