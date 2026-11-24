@@ -74,18 +74,59 @@ EOF
 # ============================================================
 #  5. 账号
 # ============================================================
+# 默认（生产形态）：
+#   - root 与非 root 特权账号一律锁定密码，禁止密码登录
+#   - SSH 只认公钥
+# 调试形态（./scripts/build.sh --debug-password）：
+#   - reinas 账号设初始密码，SSH 放开密码登录
+#   - 由 /etc/reinas/debug.conf 控制，见 docs/decisions.md D-007
+#
+# ⚠️ 除开关外没有第二条设密码的路。默认镜像里没有任何已知口令。
+REINAS_DEBUG_PASSWORD=""
+mkdir -p /etc/reinas
+if [ -s /etc/reinas/debug.conf ]; then
+    # 纯文本一行。用 read 不用 source：密码里含 $ ` " \ 也不会被展开执行。
+    IFS= read -r REINAS_DEBUG_PASSWORD < /etc/reinas/debug.conf || true
+fi
+
 # root 锁定密码（禁止密码登录），但保留账号可用：
-#   - 物理控制台可用单用户模式
-#   - 首次登录通过 cockpit 或 ssh key
-#   - 初始管理员由后续的 Web 首启向导创建
+#   - 物理控制台可用单步救援
+#   - 首次登录通过 SSH 公钥
 passwd -d root 2>/dev/null || true
 passwd -l root 2>/dev/null || true
 
-# 应急账号：锁定状态、在 wheel 组，供控制台与后续设密码使用
+# 应急账号：在 wheel 组，供控制台与后续设密码使用
 if ! id reinas >/dev/null 2>&1; then
     useradd -m -G wheel -s /bin/bash reinas
 fi
 passwd -l reinas 2>/dev/null || true
+
+if [ -n "${REINAS_DEBUG_PASSWORD}" ]; then
+    echo "==== 调试账号：reinas 密码已设置，SSH 密码登录放开 ===="
+    # chpasswd 会直接写新的 hash，顺带清掉上面 `passwd -l` 加的锁定标记，
+    # 不需要再 passwd -u（-u 只是去掉 hash 前缀的 !，对空 hash 不可靠）。
+    printf 'reinas:%s\n' "$REINAS_DEBUG_PASSWORD" | chpasswd
+    # 让 SSH 认密码：默认配置里是 PasswordAuthentication no
+    cat > /etc/ssh/sshd_config.d/20-reinas-debug.conf <<'EOF'
+# ⚠️ 调试账号开启时写入（build.sh --debug-password）。生产构建里不存在本文件。
+PasswordAuthentication yes
+EOF
+    # 在镜像里留一条看得见的痕迹，避免调试镜像被当成生产镜像发出去
+    cat > /etc/reinas/BUILD-IS-DEBUG <<'EOF'
+This image was built with a debug account enabled.
+
+  user: reinas
+  auth: password (see /etc/ssh/sshd_config.d/20-reinas-debug.conf)
+
+Do not distribute. Rebuild without ./scripts/build.sh --debug-password.
+EOF
+    chmod 0644 /etc/ssh/sshd_config.d/20-reinas-debug.conf /etc/reinas/BUILD-IS-DEBUG
+    # 清掉明文密码，别把它留在镜像里
+    rm -f /etc/reinas/debug.conf
+else
+    echo "==== 生产形态：所有账号锁定，SSH 仅公钥 ===="
+    rm -f /etc/reinas/debug.conf
+fi
 
 # ============================================================
 #  6. 服务默认状态

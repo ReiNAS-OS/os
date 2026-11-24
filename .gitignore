@@ -12,6 +12,9 @@ kiwi-build.log
 /kiwi/.profile
 /kiwi/*.log
 
+# 调试账号配置：由 build.sh 每次构建前生成（D-007），可能含明文密码
+/kiwi/debug.conf
+
 # Python 编译产物（不该入库）
 __pycache__/
 *.pyc

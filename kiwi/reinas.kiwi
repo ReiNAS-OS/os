@@ -289,6 +289,16 @@
 
     <!-- 自建包 -->
     <package name="reinas-release"/>
+
+    <!--
+      调试账号配置（D-007）。build.sh 在构建前生成这个文件：
+        关闭（默认）→ REINAS_DEBUG_PASSWORD=""
+        开启         → REINAS_DEBUG_PASSWORD="123456"
+      config.sh 读到空值就不动账号，镜像与生产形态一致。
+      ⚠️ 这份文件由 build.sh 生成，不入版本库。
+      ⚠️ 它必须放在 description 目录内，<file name> 的相对路径就是相对这里。
+    -->
+    <file name="debug.conf" target="/etc/reinas/debug.conf" permissions="0644"/>
   </packages>
 
   <!--
