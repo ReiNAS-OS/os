@@ -96,6 +96,10 @@ jobs:
           sudo mkdir -p /mnt/fedora/work
           sudo mount --bind "$PWD" /mnt/fedora/work
 
+          # dracut 需要 /dev/log，否则构建会被判定失败。
+          # 具体原因见 scripts/make-dev-log.py。
+          sudo python3 scripts/make-dev-log.py /mnt/fedora/dev/log || true
+
       - name: 构建
         run: |
           set -o pipefail
