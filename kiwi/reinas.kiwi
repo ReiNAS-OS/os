@@ -129,16 +129,15 @@
     <source path="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&amp;arch=$basearch"/>
   </repository>
   <!--
-    自建包仓库：build.sh 会先编译 reinas-release 丢进 rpms/ 并 createrepo，再挂进来。
-    ⚠️ 用 HTTP 而不是本地路径：image 阶段是 chroot 内的 dnf5，
-       本地路径 dir:///work/rpms 在 chroot 里不存在。
-       构建脚本会在容器内起一个 8888 端口的静态服务指向 rpms/，chroot 通过
-       127.0.0.1 访问（容器与 chroot 共享网络命名空间）。
+    自建包仓库：构建脚本先编译 reinas-release 到 kiwi/rpms/ 并 createrepo。
+    ⚠️ 必须放在 description 目录内部，且用 this:// 引用。
+       boxbuild 只把 description 目录共享给构建箱，
+       放在外面（如仓库根目录的 rpms/）构建箱看不到。
     不用 repo_gpgcheck：本地仓库没有签名，开了反而失败。
     不用 priority：Fedora 的 dnf5 没有 priorities 插件。
   -->
   <repository type="rpm-md" alias="reinas">
-    <source path="http://127.0.0.1:8888/"/>
+    <source path="this://./rpms"/>
   </repository>
 
   <!-- ============================ 引导 ============================ -->
