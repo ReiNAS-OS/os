@@ -127,6 +127,32 @@ else:
 PYREPO
 fi
 
+# 5) 强制 repo 文件写进镜像的 /etc/yum.repos.d
+# kiwi 的 shared_dnf_dir['reposd-dir'] 默认是 manager_base/repos（构建目录），
+# 只有调用 use_default_location() 才改成 <root>/etc/yum.repos.d。
+# image 阶段是 chroot 内直接跑 dnf5，不读构建目录，所以 repо 文件必须在
+# 镜像里，否则所有包都是 "No match for argument"。
+# 在 add_repo 开头无条件调用 use_default_location() 即可。
+python3 - "$SITE/repository/dnf5.py" <<'PYLOC'
+import sys
+
+path = sys.argv[1]
+src = open(path).read()
+marker = "        repo_file = self.shared_dnf_dir['reposd-dir'] + '/' + name + '.repo'"
+if 'self.use_default_location()' in src:
+    print("  use_default_location: 已存在")
+elif marker in src:
+    src = src.replace(
+        marker,
+        "        self.use_default_location()\n" + marker,
+        1,
+    )
+    open(path, "w").write(src)
+    print("  use_default_location: 已插入")
+else:
+    print("  use_default_location: 未匹配")
+PYLOC
+
 echo "=== XML 静态检查 ==="
 python3 /work/scripts/check-xml.py /work/kiwi/reinas.kiwi || { echo "FAIL: XML 检查未通过"; exit 1; }
 
