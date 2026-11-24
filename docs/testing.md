@@ -176,10 +176,11 @@ chk "dnf仓库"    "dnf repolist 2>/dev/null | wc -l"       ''
 
 记录在这里，避免误以为已验证：
 
-| 项 | 状态 | 原因 |
+| 项 | 状态 | 说明 |
 |---|---|---|
-| 完整构建成功 | ⏳ | 需要一台 Fedora 45 机器或 boxbuild 环境 |
+| 完整构建 | ✅ | CI 已成功产出 `.raw` 和 `.install.iso`（627 MB / `.raw.xz`） |
+| 镜像能启动 | ⏳ | 产物已出，尚未在 QEMU 里跑过 |
 | 扩盘在真机上生效 | ⏳ | 目前只在 QEMU 测 |
 | Secure Boot 真机启动 | ⏳ | 需 OVMF + 真机双验证 |
-| aarch64 构建 | ❌ | 描述文件里已注释，需要板级引导脚本 |
+| aarch64 构建 | ❌ | 描述文件里只配了 x86_64 |
 | 跨 Fedora 版本升级 | ❌ | 0.3 之前不做，见 decisions.md |

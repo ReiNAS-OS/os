@@ -12,6 +12,10 @@ kiwi-build.log
 /kiwi/.profile
 /kiwi/*.log
 
+# Python 编译产物（不该入库）
+__pycache__/
+*.pyc
+
 # 编辑器 / 系统垃圾
 .DS_Store
 *.swp

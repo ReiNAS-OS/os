@@ -26,19 +26,8 @@ sudo ./scripts/build.sh --rpm-only     # 只编译 reinas-release
 
 ### 环境要求
 
-| 环境 | 能否构建 |
-|---|---|
-| 真 Fedora 主机（含 KVM、loop、udev） | ✅ |
-| GitHub Actions `ubuntu-latest` | ✅ |
-| macOS / Docker 容器 | ❌ |
-
-**容器为什么不行**：Docker 缺 udev，内核识别 loop 分区后没人创建 `/dev/loopNpX`，kiwi 建分区时必然失败：
-
-```
-KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
-```
-
-已用 Fedora 官方描述零修改复现确认，详见 [docs/decisions.md](docs/decisions.md) D-006。
+真 Fedora 主机或 GitHub Actions runner 可以构建；macOS 和 Docker 容器不行。
+原因见 [docs/decisions.md](docs/decisions.md) D-006。
 
 ---
 
@@ -133,12 +122,17 @@ os/
 | 项 | 数值 |
 |---|---|
 | 磁盘 | 15 GB |
-| 内存 | 8 GB（boxbuild 默认），1 GB 可跑 |
+| 内存 | 8 GB（boxbuild 默认） |
 | CPU | 4 核 |
-| 时间 | 15–20 分钟（CI 实测基线 13 分钟到分区步骤） |
+| 时间 | 约 19 分钟（CI 实测） |
 | 费用 | 0 |
 
-构建产物大小参考：Fedora Cloud Base qcow2 ≈ 350 MB，本镜像因为带 cockpit + samba 会大一些。
+产物（CI 实测）：
+
+| 文件 | 大小 |
+|---|---|
+| `.raw.xz` | 627 MB |
+| `.install.iso` | 待记录 |
 
 ---
 

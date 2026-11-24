@@ -8,17 +8,8 @@
 #   ./scripts/build.sh --deps       # 只装依赖
 #   ./scripts/build.sh --rpm-only   # 只编译 reinas-release
 #
-# 走 kiwi 官方的 boxbuild 路径：在一个自带完整 /dev 和 udev 的虚拟机里构建。
-#
-# 为什么不能用容器：
-#   Docker 里没有 udev，内核识别 loop 分区后不创建 /dev/loopNpX，
-#   kiwi 建分区时必然失败：
-#       KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
-#   已用 Fedora 官方描述零修改复现确认，见 docs/decisions.md D-006。
-#
-# 为什么不用手搭 chroot：
-#   手工 bind /dev 后 loop 节点可用，但会接连撞上缺 grub i386-pc 模块、
-#   dracut 找不到 /dev/log 等一堆问题——这些在 boxbuild 的完整 VM 里都不存在。
+# 走 kiwi 官方的 boxbuild 路径（完整 /dev + udev 的虚拟机内构建）。
+# 为什么不用容器或手搭 chroot：见 docs/decisions.md D-006。
 #
 set -euo pipefail
 
