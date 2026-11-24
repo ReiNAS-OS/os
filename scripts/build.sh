@@ -44,7 +44,7 @@ install_deps() {
     dnf=$(command -v dnf5 || command -v dnf) || die "找不到 dnf，请在 Fedora 上运行"
     $SUDO "$dnf" install -y -q --skip-unavailable \
         kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild \
-        distribution-gpg-keys createrepo_c rpm-build
+        distribution-gpg-keys createrepo_c rpm-build python3-zstandard
     ok "依赖就绪"
 }
 
@@ -83,7 +83,10 @@ build_rpm() {
 build_image() {
     log "构建镜像 profile=$PROFILE box=$BOX"
 
-    python3 "$REPO_ROOT/scripts/check-xml.py" "$KIWI_DIR/reinas.kiwi" \
+    # --online 会校验包名在 Fedora 里真实存在。
+    # 漏包（dracut-network）和拼错包名这类错误，不提前拦住就要等到
+    # 构建跑到最末尾才暴露，白等十几分钟。
+    python3 "$REPO_ROOT/scripts/check-xml.py" --online "$KIWI_DIR/reinas.kiwi" \
         || die "kiwi 描述未通过静态检查"
 
     command -v kiwi-ng >/dev/null || die "找不到 kiwi-ng，先跑 --deps"

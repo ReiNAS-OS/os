@@ -108,16 +108,20 @@ jobs:
           retention-days: 14
 
       - name: 上传 raw 镜像
-        if: success()
+        # 用 always()：kiwi 可能已经产出镜像但后续清理步骤非零退出，
+        # 此时不应该丢掉产物。if-no-files-found 会显式报错。
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reinas-raw
-          path: out/*.raw
+          path: |
+            out/*.raw
+            out/*.raw.xz
           archive: false
           retention-days: 14
 
       - name: 上传装机 ISO
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reinas-install-iso

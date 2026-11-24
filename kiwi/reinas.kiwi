@@ -291,6 +291,25 @@
     <package name="reinas-release"/>
   </packages>
 
+  <!--
+    ==================== install ISO 专用包 ====================
+
+    kiwi 的包分三类：type="image" 装进磁盘镜像，type="iso" 只装进
+    install ISO（.install.iso）的构建环境，type="bootstrap" 是最小引导集。
+
+    此前只写了 image 段，漏掉 iso 段，导致 .install.iso 阶段缺输入：
+      - grub2-efi-*-cdboot 提供 El Torito EFI 引导镜像（cdboot.img），
+        ISO 的 UEFI 启动靠它，没有就是空引导。
+      - dracut-network 提供 network 模块，kiwi-dump 模块依赖它。
+
+    对照 Fedora 官方 components/boot.xml（f45 分支），这几个包都放在
+    <packages type="iso" profiles="BootCore,BootCoreLive"> 里。
+  -->
+  <packages type="iso" patternType="onlyRequired" arch="x86_64">
+    <package name="grub2-efi-x64-cdboot"/>
+    <package name="grub2-efi-ia32-cdboot"/>
+  </packages>
+
   <packages type="uninstall">
     <!-- 服务器不需要的东西，减小攻击面与体积 -->
     <package name="iwl*"/>
@@ -298,7 +317,6 @@
     <package name="NetworkManager-wifi"/>
     <package name="wpa_supplicant"/>
     <package name="bluez"/>
-    <package name="firewalld-config-workstation"/>
     <package name="plymouth-theme-*"/>
   </packages>
 
