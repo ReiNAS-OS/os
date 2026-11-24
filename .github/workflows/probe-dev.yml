@@ -1,0 +1,26 @@
+name: probe-dev
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 宿主 /dev
+        run: |
+          echo "=== 宿主 loop ==="; ls /dev/loop* 2>&1 | head -5
+          echo "=== 宿主 udev ==="; ls -d /run/udev 2>&1; systemctl is-active systemd-udevd 2>&1
+      - name: 容器内 /dev
+        run: |
+          docker run --rm --privileged fedora:45 bash -c '
+            echo "--- /dev/loop ---"; ls /dev/loop* 2>&1 | head -5
+            echo "--- /run/udev ---"; ls -d /run/udev 2>&1
+            echo "--- udevd ---"; pgrep -c udevd 2>/dev/null || echo 0
+            echo "--- losetup 测试 ---"
+            dnf install -y -q util-linux >/dev/null 2>&1
+            dd if=/dev/zero of=/tmp/t bs=1M count=32 status=none
+            sfdisk /tmp/t >/dev/null 2>&1 <<S
+label: gpt
+start=2048,size=16384,type=L
+S
+            L=$(losetup -f --show -P /tmp/t); echo "loop=$L"
+            sleep 2; ls -la ${L}p1 2>&1
+          '
