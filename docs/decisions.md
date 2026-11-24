@@ -153,7 +153,8 @@ Microsoft CA（固件 db 里）
 
 ### 背景
 
-`/Users/mouyase/Projects/my/ReiNAS/distro/` 里有一套基于 `mkksiso` + kickstart 的方案，已验证能出 ISO 并引导到 GRUB，但"完整装成系统"这一步因本地内存限制未验证。
+早期有一套基于 `mkksiso` + kickstart 的方案，已验证能出 ISO 并引导到 GRUB，但
+"完整装成系统"这一步未验证。该方案位于另一个仓库，不在本仓库内。
 
 ### 决策
 
@@ -174,9 +175,11 @@ Microsoft CA（固件 db 里）
 
 ### 旧方案里值得保留的东西
 
-`distro/rpm/reinas-release.spec` 里的兼容性设计（`system-release(releasever)` provide、`Obsoletes: fedora-release`、原样复制的 `macros.dist` 和 preset）经实践验证有效，已移植到 `packages/reinas-release/`。
-
-`distro/kickstart/reinas.ks` 里关于"NAS 不能自动清盘"的判断依然正确，在 kiwi 方案里体现为 `oem-resize` 只扩不删。
+1. **release 包的兼容性设计**——`system-release(releasever)` provide、
+   `Obsoletes: fedora-release`、原样复制的 `macros.dist` 和 preset。经实践验证
+   有效，已移植到 `packages/reinas-release/`。
+2. **"NAS 不能自动清盘"的判断**依然正确，在 kiwi 方案里体现为 `oem-resize`
+   只扩不删。
 
 ---
 
@@ -245,3 +248,76 @@ box 只共享 `--description` 和 `--target-dir` 两个目录。因此：
 过程中给 kiwi 打过 5 处源码补丁（裁 plugin 参数、去 `--config`、加 `--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：官方描述不加任何补丁也能推进到同一位置。补丁只让构建多跑十分钟，没解决任何问题。
 
 **遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
+
+---
+
+## D-007：调试账号用显式开关，默认关闭
+
+**日期**：2026-11-24
+**状态**：已决定
+
+### 背景
+
+0.1.0 之前的状态是：`root` 和 `reinas` 都 `passwd -l` 锁定，SSH 是
+`PasswordAuthentication no`，而 `<users>` 段里一个用户都没有。结果是镜像
+能构建、能启动，但**装完没有任何人能登录**——只能 `rd.break` 或单步救援改
+`/etc/shadow`。验证阶段没法做。
+
+需要一个「开发时能进、发布时进不去」的机制。
+
+### 决策
+
+**一个开关，默认关。**
+
+```bash
+./scripts/build.sh                        # 关（生产形态）
+./scripts/build.sh --debug-password       # 开，reinas 密码 123456
+./scripts/build.sh --debug-password=xxx   # 开，自定义密码
+```
+
+CI 里对应 `workflow_dispatch` 的 `debug_password` 输入，留空即关闭。
+
+### 实现链路
+
+```
+build.sh --debug-password
+  └─ 写 kiwi/debug.conf（一行明文密码；关闭时是空文件）
+       └─ reinas.kiwi 的 <file name="debug.conf" target="/etc/reinas/debug.conf">
+            └─ config.sh 用 read 读它
+                 ├─ 有密码 → chpasswd + passwd -u reinas
+                 │           + 写 20-reinas-debug.conf 放开 SSH 密码登录
+                 │           + 写 /etc/reinas/BUILD-IS-DEBUG 标记
+                 └─ 无密码 → 账号保持锁定，什么也不改
+```
+
+三个设计选择，都是踩过的：
+
+1. **用 `read` 不用 `source`。** 密码里带 `$` `` ` `` `"` `\` 时，`source`
+   会把它当 shell 代码展开。实测 `a$b`c"d\e` 用 `source` 读出来是空的。
+2. **关闭时写空文件，不写 `VAR=""`。** `[ -s file ]` 判断比解析一行 shell
+   赋值难出错。
+3. **config.sh 在两个分支里都 `rm -f /etc/reinas/debug.conf`。** 明文密码
+   不能留在交付镜像里。
+
+### 生产形态的真实含义
+
+关闭时镜像里**没有任何已知口令**：
+
+- `root` 锁定密码
+- `reinas` 锁定密码，在 `wheel` 组
+- SSH 只认公钥，但镜像里也没有预置公钥
+
+所以当前的关闭态是「安全但进不去」，不是「安全且能进」。真正要能进，还缺
+一条合法的初始凭据通道（首启向导 / ISO 装机时建账号 / 注入公钥）。这是
+0.2 的事，在它做完之前**调试开关是唯一能登录的路**。
+
+### 强制约束
+
+`validate.yml` 里有两步守着，改动时会被拦：
+
+- `确认调试账号默认关闭` —— 检查 `<file>` 条目在、`[ -n "$DEBUG_PASSWORD" ]`
+  守卫在、`rm -f debug.conf` 分支在、`debug.conf` 没入库
+- `检查调试开关的实际行为` —— 真跑一遍开关逻辑，验空文件 / 密码内容 /
+  元字符不展开 / 换行被拒
+
+`kiwi/debug.conf` 在 `.gitignore` 里，且可能含明文密码，绝不入库。

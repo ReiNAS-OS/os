@@ -4,6 +4,13 @@ set -u
 fail=0
 chk() { # chk "描述" "命令" "期望子串"
     local desc="$1" cmd="$2" want="$3" got
+    # 空期望串会让 grep -q 对任何输出都成功，等于这条断言恒真。
+    # 想表达「数量大于 0」就传正则 '[1-9]'，匹配 grep -c 的输出。
+    if [ -z "$want" ]; then
+        printf '  BUG  %s\n        期望串是空的，这条检查永远不会失败\n' "$desc"
+        fail=1
+        return
+    fi
     got=$(eval "$cmd" 2>&1)
     if echo "$got" | grep -q -- "$want"; then
         printf '  ok   %s\n' "$desc"
@@ -30,7 +37,8 @@ chk "firewalld"   "systemctl is-enabled firewalld"     'enabled'
 chk "smb关闭"     "systemctl is-enabled smb 2>&1"      'disabled'
 echo "--- 存储 ---"
 chk "btrfs根"     "findmnt -no FSTYPE /"               'btrfs'
-chk "子卷数>0"    "btrfs subvolume list / | wc -l"     ''
+chk "子卷root"    "btrfs subvolume list / | grep -c '@root\|root'"  '[1-9]'
+chk "子卷srv"     "btrfs subvolume list / | grep -c srv"  '[1-9]'
 chk "压缩挂载"    "findmnt -no OPTIONS /"              'compress=zstd'
 echo "--- 包 ---"
 chk "reinas-release" "rpm -q reinas-release"           'reinas-release-0.1.0'
@@ -39,6 +47,6 @@ chk "nfs-utils"   "rpm -q nfs-utils"                   'nfs-utils-'
 chk "cockpit"     "rpm -q cockpit"                     'cockpit-'
 chk "podman"      "rpm -q podman"                      'podman-'
 echo "--- 仓库 ---"
-chk "dnf可用"     "dnf repolist 2>/dev/null | grep -c fedora" ''
+chk "dnf仓库"     "dnf repolist 2>/dev/null | grep -c 'fedora'"  '[1-9]'
 echo
 if [ "$fail" = 0 ]; then echo "✅ 全部通过"; else echo "❌ 有失败项"; exit 1; fi

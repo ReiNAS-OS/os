@@ -3,13 +3,20 @@
 # ReiNAS OS — 构建入口
 #
 # 用法:
-#   ./scripts/build.sh              # 构建镜像
+#   ./scripts/build.sh              # 构建镜像（调试账号关闭，生产形态）
+#   ./scripts/build.sh --debug-password          # 构建时开启调试账号 reinas/123456
+#   ./scripts/build.sh --debug-password=xxx      # 用自定义调试密码
 #   ./scripts/build.sh --list-boxes # 列出可用的构建箱
 #   ./scripts/build.sh --deps       # 只装依赖
 #   ./scripts/build.sh --rpm-only   # 只编译 reinas-release
 #
 # 走 kiwi 官方的 boxbuild 路径（完整 /dev + udev 的虚拟机内构建）。
 # 为什么不用容器或手搭 chroot：见 docs/decisions.md D-006。
+#
+# 调试账号（D-007）：
+#   默认关闭 —— reinas 账号锁定、SSH 禁密码登录，与生产形态一致。
+#   只有显式加 --debug-password 才会写入初始密码并放开 SSH 密码登录。
+#   ⚠️ 用开关构建出的镜像不要对外发布。
 #
 set -euo pipefail
 
@@ -20,6 +27,11 @@ KIWI_DIR="$REPO_ROOT/kiwi"
 OUT_DIR="$REPO_ROOT/out"
 PROFILE="${PROFILE:-Disk}"
 BOX="${BOX:-fedora}"
+
+# 调试账号开关（D-007）。空 = 关闭，与生产形态一致。
+# build.sh 会把它写成 kiwi/debug.conf，由描述文件的 <file> 带进镜像，
+# config.sh 在 chroot 里读取。只有非空才设密码、才放开 SSH 密码登录。
+DEBUG_PASSWORD="${DEBUG_PASSWORD:-}"
 
 # 已经是 root 就不需要 sudo（CI 里 chroot 进去就是 root）
 if [ "$(id -u)" = 0 ]; then SUDO=""; else SUDO="sudo"; fi
@@ -40,8 +52,7 @@ install_deps() {
 }
 
 build_rpm() {
-    log "编译 reinas-release"
-    # 产物必须落在 kiwi/rpms：boxbuild 只共享 description 目录，
+    log "编译 reinas-release"    # 产物必须落在 kiwi/rpms：boxbuild 只共享 description 目录，
     # 描述文件里用 this://./rpms 引用它。
     local rpm_dir="$KIWI_DIR/rpms"
     mkdir -p "$rpm_dir" "$OUT_DIR"
@@ -71,8 +82,36 @@ build_rpm() {
     ok "repodata 就绪"
 }
 
+# 生成调试账号配置，供 kiwi 的 <file> 带进镜像。
+# 见 docs/decisions.md D-007。默认（DEBUG_PASSWORD 为空）生成空文件，
+# config.sh 读到空值就不动账号，镜像与生产形态一致。
+#
+# 文件内容就是密码明文本身，一行，不带引号。config.sh 用 `read` 取，
+# 不用 `source` —— 密码里带 $ ` " \ 之类的字符不会被当成 shell 展开。
+write_debug_conf() {
+    local conf="$KIWI_DIR/debug.conf"
+
+    if [ -n "$DEBUG_PASSWORD" ]; then
+        # 换行会把文件变成多行，读出来只剩第一行，直接拒绝
+        case "$DEBUG_PASSWORD" in
+            *$'\n'*) die "调试密码不能含换行" ;;
+        esac
+        log "调试账号：开启（reinas / ${DEBUG_PASSWORD}）"
+        printf '%s\n' "$DEBUG_PASSWORD" > "$conf"
+        printf '%s\n' \
+            "⚠️  本次构建含明文调试密码，产物不可对外发布。" >&2
+    else
+        log "调试账号：关闭（生产形态）"
+        # 空文件，不是空行 —— config.sh 里 `read` 拿不到东西即为关闭
+        : > "$conf"
+    fi
+    chmod 0644 "$conf"
+}
+
 build_image() {
     log "构建镜像 profile=$PROFILE box=$BOX"
+
+    write_debug_conf
 
     # --online 会校验包名在 Fedora 里真实存在。
     # 漏包（dracut-network）和拼错包名这类错误，不提前拦住就要等到
@@ -109,6 +148,13 @@ while [ $# -gt 0 ]; do
         --rpm-only)   ACTION=rpm ;;
         --list-boxes) ACTION=boxes ;;
         --clean)      rm -rf "$OUT_DIR"; mkdir -p "$OUT_DIR"; ok "已清空 out/" ;;
+        # 调试账号开关。不带值 = 用 123456；带 = 用指定密码。
+        --debug-password)
+            DEBUG_PASSWORD=123456 ;;
+        --debug-password=*)
+            DEBUG_PASSWORD="${1#*=}"
+            [ -n "$DEBUG_PASSWORD" ] || die "--debug-password= 后面不能为空"
+            ;;
         -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
         *)            die "未知参数: $1" ;;
     esac
