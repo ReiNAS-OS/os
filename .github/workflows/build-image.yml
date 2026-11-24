@@ -1,14 +1,21 @@
 name: build-image
 
-# 在 GitHub Actions 上构建镜像。
+# 在 GitHub Actions 上构建 ReiNAS 镜像。
 #
-# ⚠️ 关键约束：必须用 KVM runner。
-# Docker 容器缺 udev，partx --add 之后 /dev/loopNpX 不会被创建，
-# kiwi 建分区时必然失败：
+# ⚠️ 为什么必须用 chroot 隔离而不是容器
+#
+# kiwi 建分区时执行 sgdisk / partx，依赖 /dev/loopNpX 设备节点。
+# Docker 容器里没有 udev，内核识别分区后没人创建设备节点：
+#     sysfs: loop0p1 存在    /dev: loop0p1 不存在
+# 结果必然失败：
 #     KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
-# 这条已用 Fedora 官方描述零修改复现确认。见 docs/decisions.md D-006。
 #
-# ubuntu-latest 的 runner 有真 /dev/kvm，标准 docker run 就能拿到完整 /dev。
+# 这与 KVM 无关。kiwi 维护者 Conan-Kudo 在 mock#1554 里的结论：
+#   "every other image type requires using the simple isolation/chroot mode
+#    because nspawn breaks Mock's ability to expose loop devices properly"
+# 即：普通 chroot（与宿主共享 /dev）可以，容器/nspawn 不行。
+#
+# 所以这里直接在 runner 上跑，不进容器。
 
 on:
   workflow_dispatch:
@@ -22,7 +29,7 @@ on:
     paths:
       - "kiwi/**"
       - "packages/**"
-      - ".docker/**"
+      - "scripts/**"
       - ".github/workflows/build-image.yml"
 
 env:
@@ -30,51 +37,86 @@ env:
 
 jobs:
   build:
-    # 必须用支持嵌套虚拟化的 runner；ubuntu-latest 提供 /dev/kvm
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: 检查环境
+      - name: 检查宿主环境
         run: |
           echo "arch: $(uname -m)"
-          echo "docker: $(docker version --format '{{.Server.Version}}')"
-          if [ -e /dev/kvm ]; then
-            echo "/dev/kvm: 存在"
-            ls -la /dev/kvm
+          echo "kernel: $(uname -r)"
+          echo "=== loop 设备 ==="
+          ls /dev/loop* 2>&1 | head -5
+          echo "=== udev 状态 ==="
+          systemctl is-active systemd-udevd 2>&1 || true
+          ls -d /run/udev 2>&1
+          echo "=== 验证 loop 分区节点可用 ==="
+          sudo dd if=/dev/zero of=/tmp/probe.img bs=1M count=32 status=none
+          sudo sfdisk /tmp/probe.img >/dev/null 2>&1 <<'SF'
+          label: gpt
+          start=2048,size=16384,type=L
+          SF
+          LOOP=$(sudo losetup -f --show -P /tmp/probe.img)
+          echo "loop=$LOOP"
+          sudo partx --add "$LOOP" 2>/dev/null || true
+          sleep 2
+          if sudo test -e "${LOOP}p1"; then
+            echo "✓ 分区节点可用: $(sudo ls -la ${LOOP}p1)"
           else
-            echo "::error::/dev/kvm 不存在，无法构建镜像"
-            exit 1
+            echo "✗ 分区节点不可用，构建会失败"
           fi
-          df -h /
+          sudo losetup -d "$LOOP" 2>/dev/null || true
+          sudo rm -f /tmp/probe.img
 
-      - name: 构建镜像
+      # runner 是 Ubuntu，需要在 Fedora 环境里跑 kiwi。
+      # 用 systemd-nspawn 或 chroot 都不现实（要准备完整 Fedora rootfs），
+      # 这里用 chroot 方式：把 Fedora rootfs 解出来，然后 chroot 进去跑，
+      # /dev 用 bind mount，与宿主共享——这正是 kiwi 需要的。
+      - name: 准备 Fedora chroot
+        run: |
+          set -e
+          # 用 podman 拉镜像只为了取出 rootfs，构建本身不在容器里跑
+          sudo mkdir -p /mnt/fedora
+          CID=$(sudo podman create "fedora:$FEDORA_VER")
+          sudo podman export "$CID" | sudo tar -x -C /mnt/fedora
+          sudo podman rm "$CID"
+
+          # /dev 用 bind mount：这是关键。容器里 /dev 是独立挂载的缺 udev 节点，
+          # bind 宿主 /dev 后 loopNpX 能正常出现。
+          for fs in dev dev/pts proc sys run; do
+            sudo mkdir -p "/mnt/fedora/$fs"
+            sudo mount --bind "/$fs" "/mnt/fedora/$fs"
+          done
+
+          sudo cp /etc/resolv.conf /mnt/fedora/etc/resolv.conf
+
+      - name: 构建
         run: |
           set -o pipefail
-          chmod +x .docker/build-in-fedora.sh scripts/*.sh
-          docker run --rm --privileged \
-            --device /dev/kvm \
-            --name reinas-ci-build \
-            -v "$PWD":/work \
-            -w /work \
-            -e PROFILE="${{ inputs.profile || 'Disk' }}" \
-            "fedora:${{ env.FEDORA_VER }}" \
-            bash -c '
-              dnf install -y -q \
-                kiwi-cli kiwi-systemdeps distribution-gpg-keys \
-                createrepo_c rpm-build
-              bash /work/.docker/build-in-fedora.sh
-            ' 2>&1 | tee build.log
+          sudo chroot /mnt/fedora /bin/bash -c "
+            set -e
+            dnf install -y -q \
+              kiwi-cli kiwi-systemdeps distribution-gpg-keys \
+              createrepo_c rpm-build
+            echo '=== kiwi ==='
+            kiwi-ng --version 2>&1 | tail -1
+            echo '=== 验证 chroot 内分区节点 ==='
+            dd if=/dev/zero of=/tmp/p.img bs=1M count=32 status=none
+            printf 'label: gpt\nstart=2048,size=16384,type=L\n' | sfdisk /tmp/p.img >/dev/null 2>&1
+            L=\$(losetup -f --show -P /tmp/p.img)
+            sleep 1
+            ls -la \${L}p1 && losetup -d \$L && rm -f /tmp/p.img
+            echo '=== 开始构建 ==='
+            bash /work/.docker/build-in-fedora.sh
+          " 2>&1 | tee build.log
 
       - name: 产物清单
         if: always()
-        run: |
-          echo "=== out/ ==="
-          ls -lh out/ 2>/dev/null || echo "(空)"
+        run: ls -lh out/ 2>/dev/null || echo "(空)"
 
-      - name: 上传构建日志
+      - name: 上传日志
         if: always()
         uses: actions/upload-artifact@v7
         with:
