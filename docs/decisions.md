@@ -313,7 +313,7 @@ build.sh --debug-password
 
 ### 强制约束
 
-`validate.yml` 里有两步守着，改动时会被拦：
+`static-check.yml` 里有两步守着，改动时会被拦：
 
 - `确认调试账号默认关闭` —— 检查 `<file>` 条目在、`[ -n "$DEBUG_PASSWORD" ]`
   守卫在、`rm -f debug.conf` 分支在、`debug.conf` 没入库

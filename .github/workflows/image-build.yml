@@ -1,0 +1,87 @@
+name: 构建镜像
+
+# 用 kiwi 官方的 boxbuild 路径构建 ReiNAS 镜像。
+# 构建步骤抽在 .github/actions/build-image 里，「锁定重建」workflow 复用同一份。
+# 需要完整 Linux 宿主（KVM + loop + udev）。为什么不用容器：见 D-006。
+#
+# 文件名保持英文（image-build.yml），显示名是中文。
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "kiwi profile"
+        default: "Disk"
+        type: string
+      debug_password:
+        description: "调试账号密码（留空=关闭调试账号，生产形态）"
+        default: ""
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "kiwi/**"
+      - "packages/**"
+      - "scripts/**"
+      - ".github/actions/build-image/**"
+      - ".github/workflows/image-build.yml"
+
+jobs:
+  build:
+    name: 构建 ReiNAS 镜像
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 构建
+        uses: ./.github/actions/build-image
+        with:
+          profile: ${{ inputs.profile || 'Disk' }}
+          debug-password: ${{ inputs.debug_password || '' }}
+          # 始终导出锁文件：把这次实际装到的版本记下来，作为产物一起分发。
+          # 想复现时用「锁定重建」workflow 拿它重建（D-008）。
+          lock-out: "1"
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14
+
+      - name: 上传 raw 镜像
+        # 用 always()：kiwi 可能已经产出镜像但后续清理步骤非零退出，
+        # 此时不应该丢掉产物。if-no-files-found 会显式报错。
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-raw
+          path: |
+            out/*.raw
+            out/*.raw.xz
+          archive: false
+          retention-days: 14
+
+      - name: 上传版本锁文件
+        # 锁文件跟着镜像一起分发，不入库（D-008）。
+        # 拿它配合「锁定重建」workflow 可以装回同一批版本。
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-lock
+          path: out/*.lock
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: 上传装机 ISO
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-install-iso
+          path: out/*.install.iso
+          archive: false
+          retention-days: 14

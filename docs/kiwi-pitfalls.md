@@ -148,7 +148,7 @@ type="delete">`，会被随后的删除阶段抹掉。当前描述文件里删�
 ## RPM spec 注释里不能出现百分号
 
 RPM 会把注释里的 `%` 当宏展开，报 `Macro XXX has empty body`。踩过两次。
-`validate.yml` 有一步专门查这个。
+`static-check.yml` 有一步专门查这个。
 
 ---
 

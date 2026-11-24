@@ -44,7 +44,7 @@ docs/testing.md       QEMU 验证流程
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 ```
 
-`validate.yml` 跑的就是这一套，别等 CI 才发现。
+`static-check.yml` 跑的就是这一套，别等 CI 才发现。
 
 ## 这个项目特有的坑
 
@@ -62,7 +62,7 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 ## CI 命名约定
 
-workflow 文件名保持英文（`build-image.yml` / `validate.yml`），显示名、作业名、
+workflow 文件名保持英文（`image-build.yml` / `static-check.yml`），显示名、作业名、
 每个 step 的 `name` 用中文。artifact 名保持英文，它们是机器读的。
 
 ## 提交规则

@@ -167,6 +167,48 @@ jobs:
 
           if [ "$fail" != 0 ]; then exit 1; fi
 
+      - name: 检查 workflow 结构
+        run: |
+          # 三个 workflow 分工明确，构建逻辑只有一份。
+          fail=0
+
+          # 1. composite action 必须存在且被两个构建 workflow 引用
+          if [ ! -f .github/actions/build-image/action.yml ]; then
+            echo "  ✗ 缺少 .github/actions/build-image/action.yml"
+            fail=1
+          fi
+          for wf in image-build image-rebuild; do
+            if ! grep -q '.github/actions/build-image' ".github/workflows/$wf.yml"; then
+              echo "  ✗ $wf.yml 没有引用 composite action，构建逻辑会重复"
+              fail=1
+            fi
+          done
+
+          # 2. 构建逻辑不该再散落在 workflow 里
+          #    （chroot / podman export 这类只该出现在 action 里）
+          #    （只查两个构建 workflow —— 本文件里出现这个字符串是检查逻辑本身）
+          for wf in image-build image-rebuild; do
+            f=".github/workflows/$wf.yml"
+            [ -f "$f" ] || continue
+            if grep -q 'podman export' "$f"; then
+              echo "  ✗ $wf.yml 里直接写了 podman export，应移进 composite action"
+              fail=1
+            fi
+          done
+
+          # 3. workflow 文件名必须是动词在前的英文（不含下划线/空格）
+          for f in .github/workflows/*.yml; do
+            base=$(basename "$f" .yml)
+            case "$base" in
+              *[A-Z_]*|*' '*)
+                echo "  ✗ $f 文件名应为小写英文连字符（如 image-build）"
+                fail=1 ;;
+            esac
+          done
+
+          if [ "$fail" != 0 ]; then exit 1; fi
+          echo "  ✓ 结构正确：3 个 workflow，构建逻辑只有一份"
+
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
           # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。

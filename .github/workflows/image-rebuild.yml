@@ -1,0 +1,179 @@
+name: 锁定重建
+
+# 按某次构建导出的 .lock 重新构建，验证「装回同一批版本」（D-008）。
+#
+# 默认构建每次都吃仓库最新版本，所以同一份代码不同时间构建，产出的包版本
+# 不一样。这个 workflow 用锁文件把版本钉住，用来：
+#   1. 复现某次历史构建
+#   2. 验证锁文件本身有效
+#   3. 排查「是代码改坏了还是上游包更新了」
+#
+# 锁文件不入库（D-008），所以这里从两个来源取：
+#   - 上游构建的 artifact（推荐，填 run id）
+#   - 直接粘贴锁文件内容
+#
+# 文件名保持英文（image-rebuild.yml），显示名是中文。
+
+on:
+  workflow_dispatch:
+    inputs:
+      lock_run_id:
+        description: "从哪次「构建镜像」的运行取锁文件（run id，在 Actions 页面 URL 里）"
+        required: false
+        type: string
+      lock_content:
+        description: "或者直接粘贴锁文件内容（与上一项二选一）"
+        required: false
+        type: string
+      profile:
+        description: "kiwi profile"
+        default: "Disk"
+        type: string
+      debug_password:
+        description: "调试账号密码（留空=关闭调试账号，生产形态）"
+        default: ""
+        type: string
+
+jobs:
+  rebuild:
+    name: 按锁文件重建镜像
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 准备锁文件
+        id: lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.lock_run_id }}
+          LOCK_CONTENT: ${{ inputs.lock_content }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .lock
+
+          if [ -n "$LOCK_CONTENT" ]; then
+            # 粘贴模式：内容直接落盘
+            printf '%s\n' "$LOCK_CONTENT" > .lock/reinas.lock
+            echo "来源: 手动粘贴"
+          elif [ -n "$RUN_ID" ]; then
+            # artifact 模式：从指定 run 拉 reinas-lock
+            echo "来源: run $RUN_ID 的 reinas-lock artifact"
+            gh run download "$RUN_ID" -n reinas-lock -R "$REPO" -D .lock-tmp
+            # artifact 里可能带一层目录，找那个 .lock 文件
+            found=$(find .lock-tmp -name '*.lock' -type f | head -1)
+            [ -n "$found" ] || { echo "::error::artifact 里没有 .lock 文件"; exit 1; }
+            cp "$found" .lock/reinas.lock
+            rm -rf .lock-tmp
+          else
+            echo "::error::必须提供 lock_run_id 或 lock_content 之一"
+            exit 1
+          fi
+
+          # 基本校验：不能是空文件，行数得像回事
+          lines=$(grep -vc '^#' .lock/reinas.lock || true)
+          if [ "$lines" -lt 10 ]; then
+            echo "::error::锁文件只有 $lines 个包，不像有效内容"
+            exit 1
+          fi
+          echo "锁文件: $lines 个包"
+          echo "---- 前 5 行 ----"
+          grep -v '^#' .lock/reinas.lock | head -5
+          echo "packages=$lines" >> "$GITHUB_OUTPUT"
+
+      - name: 按锁文件构建
+        uses: ./.github/actions/build-image
+        with:
+          profile: ${{ inputs.profile || 'Disk' }}
+          debug-password: ${{ inputs.debug_password || '' }}
+          lock-file: .lock/reinas.lock
+
+      - name: 对比锁文件与实际产物
+        if: always()
+        run: |
+          # 这一步是这个 workflow 的意义所在：证明锁文件真的被遵守了。
+          # 把这次实际装到的包清单和锁文件逐行比对。
+          if ! ls out/*.packages >/dev/null 2>&1; then
+            echo "::error::没找到 out/*.packages，无法比对"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import glob
+          import sys
+
+          lock_file = '.lock/reinas.lock'
+          packages = glob.glob('out/*.packages')
+          if not packages:
+              sys.exit('没找到 out/*.packages')
+
+          def parse_lock(path):
+              out = {}
+              for line in open(path, encoding='utf-8'):
+                  line = line.strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  name, ver, rel, arch = line.split('|')
+                  out[name] = f'{ver}-{rel}'
+              return out
+
+          def parse_packages(path):
+              out = {}
+              for line in open(path, encoding='utf-8'):
+                  line = line.strip()
+                  if not line:
+                      continue
+                  parts = line.split('|')
+                  if len(parts) < 5:
+                      continue
+                  name, epoch, ver, rel, arch = parts[:5]
+                  e = f'{epoch}:' if epoch and epoch not in ('0', '(none)') else ''
+                  out[name] = f'{e}{ver}-{rel}'
+              return out
+
+          want = parse_lock(lock_file)
+          got = parse_packages(packages[0])
+          print(f'锁文件 {len(want)} 个包，镜像里 {len(got)} 个包\n')
+
+          bad = []
+          for name, ver in sorted(want.items()):
+              if name not in got:
+                  bad.append(f'  ✗ {name}: 锁了但没装上')
+                  continue
+              # 锁文件里的版本可能带 epoch 前缀，比较时统一去掉
+              g = got[name].split(':', 1)[-1]
+              w = ver.split(':', 1)[-1]
+              if g != w:
+                  bad.append(f'  ✗ {name}: 锁 {ver} / 实际 {got[name]}')
+
+          if bad:
+              print(f'版本不符 {len(bad)} 个：')
+              for b in bad:
+                  print(b)
+              sys.exit(1)
+          print('✅ 全部版本与锁文件一致')
+          PY
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rebuild-log
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 上传重建产物
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-rebuild-raw
+          path: |
+            out/*.raw
+            out/*.raw.xz
+          if-no-files-found: warn
+          archive: false
+          retention-days: 7
