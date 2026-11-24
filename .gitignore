@@ -15,6 +15,10 @@ kiwi-build.log
 # 调试账号配置：由 build.sh 每次构建前生成（D-007），可能含明文密码
 /kiwi/debug.conf
 
+# 版本锁定的派生描述：build.sh --lock 时生成（D-008），用完即弃。
+# 锁文件本身也不入库 —— 它是构建产物，跟着镜像分发。
+/kiwi/reinas.locked.kiwi
+
 # Python 编译产物（不该入库）
 __pycache__/
 *.pyc

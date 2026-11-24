@@ -92,11 +92,13 @@ jobs:
           # 用 sudo env 把变量塞进 chroot 的环境，而不是拼进 bash -c 的字符串：
           # 密码里带引号、$ 或空格时不会把命令拆坏。
           # chroot 里的 bash -c 用单引号，变量由环境继承。
+          # 始终 --lock-out：把这次实际装到的版本导出成 out/*.lock，
+          # 作为产物一起分发。想复现时拿它 --lock 即可（D-008）。
           sudo env DEBUG_PASSWORD="$DEBUG_PASSWORD" PROFILE="$PROFILE" \
             chroot /mnt/fedora /bin/bash -c '
               set -e
               cd /work
-              bash scripts/build.sh
+              bash scripts/build.sh --lock-out
             ' 2>&1 | tee build.log
 
       - name: 整理产物
@@ -131,6 +133,17 @@ jobs:
             out/*.raw.xz
           archive: false
           retention-days: 14
+
+      - name: 上传版本锁文件
+        # 版本锁文件跟着镜像一起分发，不入库（D-008）。
+        # 拿它配合 `./scripts/build.sh --lock <file>` 可以装回同一批版本。
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reinas-lock
+          path: out/*.lock
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: 上传装机 ISO
         if: always()

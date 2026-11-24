@@ -223,7 +223,11 @@
 
     <!-- 网络 -->
     <package name="NetworkManager"/>
-    <package name="NetworkManager-bluetooth"/>
+    <!--
+      ⚠️ 不要加 NetworkManager-bluetooth。
+      它是蓝牙的 NM 集成插件，而 bluez 在 uninstall 段被移除 —— 装了也会
+      连同依赖一起被清掉，纯属无效配置。NAS 不需要蓝牙。
+    -->
     <package name="iproute"/>
     <package name="iputils"/>
     <package name="dhcp-client"/>

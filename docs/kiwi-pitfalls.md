@@ -110,6 +110,26 @@ type="delete">`，会被随后的删除阶段抹掉。当前描述文件里删�
 
 ---
 
+## `type="uninstall"` 会带走依赖它的包
+
+`<packages type="uninstall">` 走的是包管理器卸载，**会连同依赖链一起清掉**。
+所以「image 段装 A，uninstall 段卸 B」时，如果 A 依赖 B，A 也留不下来。
+
+实例：`NetworkManager-bluetooth` 依赖 `bluez`，而 `bluez` 在 uninstall 段。
+结果这个包从来没进过镜像。曾经描述文件 87 个包、锁文件只有 86 个，缺的就是它。
+现在这行已删除，原位置留了注释说明不要加回来。
+
+**自查方法**：`build.sh --lock-out` 生成的锁文件会列出「描述里有但没装上」的包：
+
+```
+⚠️ 描述文件里列了但没装上（可能是 glob 或被 uninstall 移除）：
+   NetworkManager-bluetooth
+```
+
+看到这个提示就去查 uninstall 段。正常情况应该一个都不缺。
+
+---
+
 ## 环境陷阱
 
 - **`config.sh` 在 chroot 里跑，`systemctl enable` 可能非零退出。** kiwi 用
