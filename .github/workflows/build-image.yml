@@ -1,20 +1,22 @@
 name: build-image
 
-# 在 GitHub Actions 的 x86_64 Ubuntu runner 上跑真实构建。
+# 在 GitHub Actions 上构建镜像。
 #
-# 目的：验证本地 macOS（aarch64 + Rosetta + fuse 挂载）无法确认的最后一段——
-# kiwi 能否在原生 x86_64 的 Fedora 45 容器里把镜像完整生成出来。
+# ⚠️ 关键约束：必须用 KVM runner。
+# Docker 容器缺 udev，partx --add 之后 /dev/loopNpX 不会被创建，
+# kiwi 建分区时必然失败：
+#     KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
+# 这条已用 Fedora 官方描述零修改复现确认。见 docs/decisions.md D-006。
 #
-# runner 是 Linux，所以不需要 Rosetta、不需要处理 macOS 的 fuse 限制，
-# 是判断「kiwi 与 Fedora 45 是否真的不兼容」的干净环境。
+# ubuntu-latest 的 runner 有真 /dev/kvm，标准 docker run 就能拿到完整 /dev。
 
 on:
   workflow_dispatch:
     inputs:
-      keep_container:
-        description: "构建失败时保留容器以便排查"
-        type: boolean
-        default: false
+      profile:
+        description: "kiwi profile"
+        default: "Disk"
+        type: string
   push:
     branches: [main]
     paths:
@@ -28,29 +30,36 @@ env:
 
 jobs:
   build:
+    # 必须用支持嵌套虚拟化的 runner；ubuntu-latest 提供 /dev/kvm
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v7
 
-      # runner 上的 docker 是原生 x86_64，不需要 --platform 模拟
       - name: 检查环境
         run: |
-          echo "runner arch: $(uname -m)"
-          docker version --format '{{.Server.Version}}'
+          echo "arch: $(uname -m)"
+          echo "docker: $(docker version --format '{{.Server.Version}}')"
+          if [ -e /dev/kvm ]; then
+            echo "/dev/kvm: 存在"
+            ls -la /dev/kvm
+          else
+            echo "::error::/dev/kvm 不存在，无法构建镜像"
+            exit 1
+          fi
           df -h /
 
       - name: 构建镜像
         run: |
           set -o pipefail
           chmod +x .docker/build-in-fedora.sh scripts/*.sh
-
           docker run --rm --privileged \
+            --device /dev/kvm \
             --name reinas-ci-build \
             -v "$PWD":/work \
             -w /work \
-            -e PROFILE=Disk \
+            -e PROFILE="${{ inputs.profile || 'Disk' }}" \
             "fedora:${{ env.FEDORA_VER }}" \
             bash -c '
               dnf install -y -q \
@@ -64,25 +73,15 @@ jobs:
         run: |
           echo "=== out/ ==="
           ls -lh out/ 2>/dev/null || echo "(空)"
-          echo
-          echo "=== 是否有镜像产物 ==="
-          for f in out/*.raw out/*.install.iso; do
-            [ -e "$f" ] && echo "  ✓ $f ($(du -h "$f" | cut -f1))"
-          done
 
       - name: 上传构建日志
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: build-log
-          path: |
-            build.log
-            out/kiwi-build.log
-          if-no-files-found: warn
+          path: build.log
           retention-days: 14
 
-      # .raw 和 .install.iso 可能各几百 MB。
-      # v7 支持 archive: false 直接上传单个文件，省掉打包解包的时间。
       - name: 上传 raw 镜像
         if: success()
         uses: actions/upload-artifact@v7
@@ -90,7 +89,6 @@ jobs:
           name: reinas-raw
           path: out/*.raw
           archive: false
-          if-no-files-found: error
           retention-days: 14
 
       - name: 上传装机 ISO
@@ -100,14 +98,4 @@ jobs:
           name: reinas-install-iso
           path: out/*.install.iso
           archive: false
-          if-no-files-found: error
           retention-days: 14
-
-      - name: 失败时输出诊断
-        if: failure()
-        run: |
-          echo "=== 构建日志尾部 ==="
-          tail -80 build.log 2>/dev/null || true
-          echo
-          echo "=== kiwi 日志尾部 ==="
-          tail -80 out/kiwi-build.log 2>/dev/null || true

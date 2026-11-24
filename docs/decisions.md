@@ -177,3 +177,61 @@ Microsoft CA（固件 db 里）
 `distro/rpm/reinas-release.spec` 里的兼容性设计（`system-release(releasever)` provide、`Obsoletes: fedora-release`、原样复制的 `macros.dist` 和 preset）经实践验证有效，已移植到 `packages/reinas-release/`。
 
 `distro/kickstart/reinas.ks` 里关于"NAS 不能自动清盘"的判断依然正确，在 kiwi 方案里体现为 `oem-resize` 只扩不删。
+
+---
+
+## D-006：不能用 Docker 容器构建镜像，必须用真 /dev 环境
+
+**日期**：2026-11-24
+**状态**：已决定
+
+### 结论
+
+镜像构建**不能**在 Docker 容器里跑。必须用有完整 `/dev` 的环境：GitHub Actions 的 KVM runner，或一台真的 Fedora 主机。
+
+### 现象
+
+构建走到最后一步（`sgdisk` 写完分区表、`partx --add` 之后）必然失败：
+
+```
+EXEC: [sgdisk --align-end -n 4:0:0 -c 4:p.lxroot /dev/loop0]
+EXEC: [partx --add /dev/loop0]
+ERROR: KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
+```
+
+### 证据链
+
+| 测试 | 结果 |
+|---|---|
+| Fedora 官方 `kiwi-descriptions` f45 分支，**零修改零补丁** | 同样失败，同一位置 |
+| 自写描述 + 5 处 kiwi 源码补丁 | 同样失败，同一位置 |
+| 容器内 `losetup -P` 带分区表的镜像 | 内核识别了分区（`sysfs` 里有 `loop1p1`），但 `/dev/loop1p1` 不存在 |
+| 手动 `mknod /dev/loop1p1 b 259 2` | 立即可用 |
+| 启动 `systemd-udevd` + `udevadm trigger` | 仍不创建节点 |
+
+**根因**：Docker 容器里没有 udev，内核识别出 loop 分区后没有程序去创建 `/dev/loopNpX` 设备节点。
+
+### 排除的判断
+
+- ❌ **不是 kiwi 的 bug**：Fedora 官方描述同样失败，而 Fedora 自己就是用 kiwi 造 Cloud/Vagrant/容器/spin 镜像的
+- ❌ **不是我们改坏了**：零补丁的官方描述失败在完全相同的位置
+- ❌ **不是架构问题**：aarch64（本地）和 x86_64（CI）都失败
+
+### 附带结论：那 5 处 kiwi 补丁是无效的
+
+过程中给 kiwi 打了 5 处源码补丁（裁 plugin 参数、去 `--config`、加 `--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：**官方描述不加任何补丁也能推进到同一个位置。** 补丁只是让构建多跑了十分钟，没有解决任何实质问题。
+
+已全部移除。教训：**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
+
+### 环境要求
+
+| 环境 | 能否出镜像 |
+|---|---|
+| GitHub Actions `ubuntu-latest` + `--device /dev/kvm` | ✅ |
+| 真 Fedora 主机 | ✅ |
+| `kiwi-boxbuild --container`（kiwi 官方容器路径） | 待验证 |
+| 普通 `docker run --privileged` | ❌ 缺 udev |
+
+### 容器仍然有用的部分
+
+容器可以验证到「软件安装完成」这一步：bootstrap、325 个包的 image 阶段、`config.sh` 全部能跑通。所以本地调试包依赖、找包名错误、验证 `config.sh` 逻辑时，容器依然是最快的。只是**最后的分区+文件系统步骤必须在真环境完成**。
