@@ -8,7 +8,8 @@
 ## 快速上手
 
 ```bash
-sudo ./scripts/build.sh              # 完整构建
+sudo ./scripts/build.sh              # 完整构建（生产形态，无已知口令）
+sudo ./scripts/build.sh --debug-password  # 调试构建：reinas / 123456
 sudo ./scripts/build.sh --rpm-only   # 只编译 reinas-release
 ./scripts/build.sh --list-boxes      # 看可用构建箱
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
@@ -17,17 +18,39 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 构建需要完整 Linux 宿主（KVM + loop + udev）。**macOS 和 Docker 容器都不行**，
 原因见 `docs/decisions.md` D-006。CI 用 GitHub Actions 的 `ubuntu-latest`。
 
+**调试账号默认关闭**（D-007）。不开开关构建出来的镜像没有任何口令、SSH 只认
+公钥、镜像里也没预置公钥 —— 装完进不去。验证阶段必须加 `--debug-password`。
+开关打开产出的镜像不要对外发布。
+
 ## 目录
 
 ```
 kiwi/reinas.kiwi    镜像描述，唯一入口。改包、改分区、改引导都在这里
-kiwi/config.sh      镜像内 chroot 配置：身份、服务、防火墙、SELinux
+kiwi/config.sh      镜像内 chroot 配置：身份、账号、服务、防火墙、SELinux
 packages/           自建 RPM（reinas-release 替代 fedora-release）
-scripts/build.sh    构建入口
+scripts/build.sh    构建入口（--debug-password 开关在这里）
 scripts/check-xml.py 描述文件静态检查
 docs/decisions.md   技术决策记录，改架构前先读
 docs/testing.md     QEMU 验证流程
 ```
+
+## CI 命名约定
+
+workflow **文件名保持英文**（`build-image.yml` / `validate.yml`），
+**显示名和每个 step 的 name 用中文**：
+
+```yaml
+name: 构建镜像
+jobs:
+  build:
+    name: 构建 ReiNAS 镜像
+    steps:
+      - name: 检出代码
+      - name: 检查宿主环境
+```
+
+新加 workflow 或 step 时照这个来。artifact 名（`reinas-raw` 之类）保持英文，
+它们是机器读的。
 
 ## 这个项目特有的坑
 

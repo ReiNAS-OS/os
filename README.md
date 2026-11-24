@@ -16,13 +16,32 @@
 构建走 kiwi 官方的 **boxbuild** 路径：在一个自带完整 `/dev` 和 udev 的虚拟机里构建。
 
 ```bash
-sudo ./scripts/build.sh                # 完整构建
+sudo ./scripts/build.sh                # 完整构建（生产形态：无任何已知口令）
 sudo ./scripts/build.sh --deps         # 只装依赖
 sudo ./scripts/build.sh --rpm-only     # 只编译 reinas-release
 ./scripts/build.sh --list-boxes        # 查看可用构建箱
+
+sudo ./scripts/build.sh --debug-password   # 调试构建：reinas / 123456
 ```
 
 产物在 `out/`。
+
+### 调试账号（默认关闭）
+
+默认构建出来的镜像**没有任何口令，SSH 只认公钥，而镜像里也没有公钥** ——
+装完进不去。要在验证阶段登录，必须显式打开调试开关：
+
+```bash
+sudo ./scripts/build.sh --debug-password        # reinas / 123456
+sudo ./scripts/build.sh --debug-password=自定义  # 换一个密码
+```
+
+开关打开时：`reinas` 账号（在 `wheel` 组）设了初始密码、SSH 放开密码登录，
+镜像里会留下 `/etc/reinas/BUILD-IS-DEBUG` 标记。**这种镜像不要对外发布。**
+CI 的 `构建镜像` workflow 也有对应的 `debug_password` 输入，留空即关闭。
+
+为什么不默认给密码 —— 以及「关闭态其实进不去」这个待解的缺口，见
+[docs/decisions.md](docs/decisions.md) D-007。
 
 ### 环境要求
 
@@ -66,9 +85,32 @@ os/
 │       ├── files/         # os-release / issue / releasever
 │       └── base/          # 从 Fedora 原样复制的 dist 宏与 preset
 ├── scripts/
-│   └── build.sh           # 构建入口
+│   ├── build.sh           # 构建入口
+│   ├── check-xml.py       # 描述文件静态检查（含包名真实性）
+│   └── smoke.sh           # 镜像内冒烟测试
 ├── rpms/                  # 编译产物 + createrepo 元数据（git 忽略）
 └── out/                   # 镜像产物（git 忽略）
+```
+
+---
+
+## CI
+
+两个 workflow，**文件名保持英文，显示名和每个步骤名用中文**：
+
+| 文件 | 显示名 | 触发 | 干什么 |
+|---|---|---|---|
+| `build-image.yml` | 构建镜像 | push 到 `main`（`kiwi/` `packages/` `scripts/` 变动）、手动 | boxbuild 出 `.raw.xz` + `.install.iso`，约 15 分钟 |
+| `validate.yml` | 校验 | push、PR、手动 | 静态检查，约 20 秒 |
+
+`validate.yml` 查这些：kiwi 描述（注释里的连续减号、未转义的 `&`、`locale`
+后缀、包名是否真在 Fedora 里）、`spec` 注释里有没有百分号、`reinas-update`
+能不能编译、shellcheck、bash 语法，以及**调试账号是否默认关闭**。
+
+本地提交前先跑一次，别等 CI：
+
+```bash
+python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 ```
 
 ---
