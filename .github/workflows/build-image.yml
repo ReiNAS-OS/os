@@ -1,0 +1,102 @@
+name: build-image
+
+# 在 GitHub Actions 的 x86_64 Ubuntu runner 上跑真实构建。
+#
+# 目的：验证本地 macOS（aarch64 + Rosetta + fuse 挂载）无法确认的最后一段——
+# kiwi 能否在原生 x86_64 的 Fedora 45 容器里把镜像完整生成出来。
+#
+# runner 是 Linux，所以不需要 Rosetta、不需要处理 macOS 的 fuse 限制，
+# 是判断「kiwi 与 Fedora 45 是否真的不兼容」的干净环境。
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_container:
+        description: "构建失败时保留容器以便排查"
+        type: boolean
+        default: false
+  push:
+    branches: [master, main]
+    paths:
+      - "kiwi/**"
+      - "packages/**"
+      - ".docker/**"
+      - ".github/workflows/build-image.yml"
+
+env:
+  FEDORA_VER: "45"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner 上的 docker 是原生 x86_64，不需要 --platform 模拟
+      - name: 检查环境
+        run: |
+          echo "runner arch: $(uname -m)"
+          docker version --format '{{.Server.Version}}'
+          df -h /
+
+      - name: 构建镜像
+        run: |
+          set -o pipefail
+          chmod +x .docker/build-in-fedora.sh scripts/*.sh
+
+          docker run --rm --privileged \
+            --name reinas-ci-build \
+            -v "$PWD":/work \
+            -w /work \
+            -e PROFILE=Disk \
+            "fedora:${{ env.FEDORA_VER }}" \
+            bash -c '
+              dnf install -y -q \
+                kiwi-cli kiwi-systemdeps distribution-gpg-keys \
+                createrepo_c rpm-build
+              bash /work/.docker/build-in-fedora.sh
+            ' 2>&1 | tee build.log
+
+      - name: 产物清单
+        if: always()
+        run: |
+          echo "=== out/ ==="
+          ls -lh out/ 2>/dev/null || echo "(空)"
+          echo
+          echo "=== 是否有镜像产物 ==="
+          for f in out/*.raw out/*.install.iso; do
+            [ -e "$f" ] && echo "  ✓ $f ($(du -h "$f" | cut -f1))"
+          done
+
+      - name: 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            build.log
+            out/kiwi-build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 上传镜像产物
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reinas-image
+          path: |
+            out/*.raw
+            out/*.install.iso
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 失败时输出诊断
+        if: failure()
+        run: |
+          echo "=== 构建日志尾部 ==="
+          tail -80 build.log 2>/dev/null || true
+          echo
+          echo "=== kiwi 日志尾部 ==="
+          tail -80 out/kiwi-build.log 2>/dev/null || true
