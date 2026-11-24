@@ -92,6 +92,10 @@ jobs:
 
           sudo cp /etc/resolv.conf /mnt/fedora/etc/resolv.conf
 
+          # 仓库挂到 /work（脚本里固定用这个路径）
+          sudo mkdir -p /mnt/fedora/work
+          sudo mount --bind "$PWD" /mnt/fedora/work
+
       - name: 构建
         run: |
           set -o pipefail
@@ -114,7 +118,12 @@ jobs:
 
       - name: 产物清单
         if: always()
-        run: ls -lh out/ 2>/dev/null || echo "(空)"
+        run: |
+          ls -lh out/ 2>/dev/null || echo "(空)"
+          sudo umount /mnt/fedora/work 2>/dev/null || true
+          for fs in dev/pts dev proc sys run; do
+            sudo umount "/mnt/fedora/$fs" 2>/dev/null || true
+          done
 
       - name: 上传日志
         if: always()
