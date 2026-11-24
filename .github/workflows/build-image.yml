@@ -82,6 +82,9 @@ jobs:
       - name: 产物
         if: always()
         run: |
+          # kiwi 从 boxbuild 的 VM 里带回产物时保留了 root 的 0600 权限，
+          # upload-artifact 以 runner 用户跑，读不了会报 EACCES。
+          sudo chmod -R a+rX out/ 2>/dev/null || true
           ls -lh out/ 2>/dev/null || echo "(空)"
           sudo umount /mnt/fedora/work 2>/dev/null || true
           for m in dev proc sys run; do
