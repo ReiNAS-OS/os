@@ -13,20 +13,25 @@
 
 ## 快速开始
 
+**出完整镜像**（需要真 `/dev`，Docker 容器不行，见下方说明）：
+
 ```bash
-git clone https://github.com/ReiNAS-OS/os.git
-cd os
+# 在 GitHub Actions 上跑（推荐，runner 有真 KVM）
+gh workflow run build-image.yml
 
-# 全部依赖 + 构建
+# 或在一台真的 Fedora 45 主机上
 sudo ./scripts/build.sh
-
-# 或者分步
-sudo ./scripts/build.sh --deps       # 只装依赖
-sudo ./scripts/build.sh --rpm-only   # 只编译 reinas-release
-sudo ./scripts/build.sh --box        # 用 kiwi boxbuild（隔离 VM，不需要 root）
 ```
 
-产物在 `out/`。
+**本地容器只能验证到软件安装完成**，最后的分区步骤会失败：
+
+```bash
+./scripts/build-in-container.sh
+# ...
+# KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
+```
+
+原因见 [docs/decisions.md](docs/decisions.md) D-006：Docker 缺 udev，`partx --add` 后 `/dev/loopNpX` 不会被创建。调试包依赖、验证 `config.sh` 逻辑时容器仍然好用。
 
 ---
 
@@ -123,7 +128,7 @@ os/
 | 磁盘 | 15 GB |
 | 内存 | 8 GB（boxbuild 默认），1 GB 可跑 |
 | CPU | 4 核 |
-| 时间 | < 20 分钟 |
+| 时间 | 15–20 分钟（CI 实测基线 13 分钟到分区步骤） |
 | 费用 | 0 |
 
 构建产物大小参考：Fedora Cloud Base qcow2 ≈ 350 MB，本镜像因为带 cockpit + samba 会大一些。

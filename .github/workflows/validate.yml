@@ -2,7 +2,7 @@ name: validate
 
 on:
   push:
-    branches: [master, main]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +10,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # kiwi 描述里的四类坑都在这一个脚本里查：
       # 注释中的连续减号（XML 规范禁止）、未转义的 &、locale 后缀、
@@ -62,10 +62,20 @@ jobs:
           URL = ("https://mirrors.kernel.org/fedora/releases/45/Everything/"
                  "x86_64/os/repodata/repomd.xml")
           print("拉取 Fedora 45 元数据...")
-          repomd = urllib.request.urlopen(URL, timeout=120).read().decode()
+          try:
+              repomd = urllib.request.urlopen(URL, timeout=120).read().decode()
+          except Exception as e:
+              # 这是外部依赖，网络不通不该判定代码有问题。
+              # 本地构建和真正的 build-image workflow 都会独立验证包名。
+              print(f"  ! 无法获取元数据（{e}），跳过此检查")
+              sys.exit(0)
           href = re.search(r'href="([^"]*primary\.xml\.(?:gz|zst))"', repomd).group(1)
           base = URL.rsplit("/repodata/", 1)[0]
-          raw = urllib.request.urlopen(f"{base}/{href}", timeout=300).read()
+          try:
+              raw = urllib.request.urlopen(f"{base}/{href}", timeout=300).read()
+          except Exception as e:
+              print(f"  ! 下载 primary 元数据失败（{e}），跳过此检查")
+              sys.exit(0)
 
           if href.endswith(".zst"):
               try:

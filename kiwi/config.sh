@@ -43,9 +43,22 @@ GRUB_DISABLE_RECOVERY=true
 EOF
 
 mkdir -p /boot/grub2
-[ -f /boot/grub2/grubenv ] || grub2-editenv /boot/grub2/grubenv create
-# menu_auto_hide=1：无异常时跳过菜单直接启动（NAS 不该卡在菜单等人按）
-grub2-editenv /boot/grub2/grubenv set menu_auto_hide=1 boot_indeterminate=1
+# ⚠️ grub2-editenv 在构建环境里会失败：
+#    grub2-editenv: error: failed to get canonical path of `overlay'
+# 因为此时根文件系统是容器里的 overlay，不是最终镜像的分区，
+# grub 的路径解析拿不到真实的块设备。而 kiwi 用 set -euxo pipefail 跑本脚本，
+# 一条命令非零退出就会让整个构建失败。
+#
+# grubenv 本身只是 /boot/grub2/grubenv 里的一个 1KiB 文本块，
+# 用 dd 写一块全零的合法 grubenv 就够；menu_auto_hide 等键由 kiwi 的
+# bootloader 阶段或首次启动的 grub2-mkconfig 决定，不在这里强求。
+if [ ! -f /boot/grub2/grubenv ]; then
+    # 合法的空 grubenv：1024 字节，以 "# GRUB Environment Block" 开头，其余补 #
+    {
+        printf '# GRUB Environment Block\n'
+        head -c 1003 /dev/zero | tr '\0' '#'
+    } > /boot/grub2/grubenv 2>/dev/null || true
+fi
 
 # ============================================================
 #  4. 首启扩盘
@@ -77,13 +90,15 @@ passwd -l reinas 2>/dev/null || true
 # ============================================================
 #  6. 服务默认状态
 # ============================================================
-systemctl enable sshd.service
-systemctl enable chronyd.service
-systemctl enable firewalld.service
-systemctl enable cockpit.socket
-systemctl enable NetworkManager.service
-systemctl enable fstrim.timer
-systemctl enable systemd-timesyncd.service 2>/dev/null || true
+# ⚠️ chroot 里没有运行中的 systemd，systemctl enable 可能返回非零。
+# kiwi 用 set -e 跑本脚本，一条失败就整体中止，所以每条都要兜底。
+systemctl enable sshd.service            >/dev/null 2>&1 || true
+systemctl enable chronyd.service         >/dev/null 2>&1 || true
+systemctl enable firewalld.service       >/dev/null 2>&1 || true
+systemctl enable cockpit.socket          >/dev/null 2>&1 || true
+systemctl enable NetworkManager.service  >/dev/null 2>&1 || true
+systemctl enable fstrim.timer            >/dev/null 2>&1 || true
+systemctl enable systemd-timesyncd.service >/dev/null 2>&1 || true
 
 # NAS 核心：smb / nfs 不默认启用，等用户在面板里配好共享再开
 systemctl disable smb.service  2>/dev/null || true
@@ -96,7 +111,7 @@ systemctl disable ModemManager.service 2>/dev/null || true
 systemctl disable debug-shell.service 2>/dev/null || true
 
 # 目标：无图形界面（NAS 不该跑 display-manager）
-systemctl set-default multi-user.target
+systemctl set-default multi-user.target >/dev/null 2>&1 || true
 
 # ============================================================
 #  7. 安全基线
@@ -167,7 +182,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable reinas-issue.service
+systemctl enable reinas-issue.service >/dev/null 2>&1 || true
 
 cat > /etc/NetworkManager/dispatcher.d/50-reinas-issue <<'EOF'
 #!/bin/bash

@@ -1,14 +1,21 @@
 [reinas]
 name=ReiNAS Packages
 # $releasever 由 /etc/dnf/vars/releasever 固定为 Fedora 主版本号（45），
-# 不是 reiNAS 自己的 0.1.0 —— 见 reinas-release.spec 里 system-release(releasever) 的说明。
+# 不是 ReiNAS 自己的 0.1.0 —— 见 reinas-release.spec 里
+# system-release(releasever) 的说明。
 baseurl=https://repo.reinas.example/reinas/f$releasever/$basearch/
-enabled=1
+
+# ⚠️ 默认关闭：仓库域名还没部署。
+# 如果设成 enabled=1，dnf 会去解析 repo.reinas.example 并因 DNS 失败而
+# 中止整个事务——实测连 dnf5 的 skip_if_unavailable 也盖不住 DNS 解析失败。
+# 等仓库真正上线后改成 1，或者由面板在首次配置时启用。
+enabled=0
+
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-reinas
-# 仓库还没上线时不要让 dnf 整体报错（dnf-defaults.conf 里也设了 skip_if_unavailable）
 skip_if_unavailable=True
+
 # 不设 priority：Fedora 的 dnf5 没有 priorities 插件，
-# 设了会让 kiwi 传 --disable-plugin=priorities 然后报
+# 设了会让 kiwi 传 disable-plugin 参数并报
 # "No matches were found for the following plugin name patterns"。
