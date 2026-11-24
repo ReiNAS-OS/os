@@ -191,6 +191,13 @@
     <package name="efibootmgr"/>
     <package name="dracut"/>
     <package name="dracut-config-generic"/>
+    <!--
+      dracut-network 提供 network 模块，kiwi 生成 install ISO 的 initramfs
+      时用 kiwi-dump 模块，而 kiwi-dump 依赖 network：
+        Module 'kiwi-dump' depends on module 'network', which can't be installed
+      缺了它 .raw 能出，但 .install.iso 会失败。
+    -->
+    <package name="dracut-network"/>
 
     <!-- kiwi 的 OEM 运行时：扩盘 + install.iso 部署 -->
     <package name="dracut-kiwi-oem-repart"/>
