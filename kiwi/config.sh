@@ -194,15 +194,14 @@ cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'
 #!/bin/bash
 # 生成登录前提示到 /etc/issue.d/，agetty 每次打印都会重读。
 #
-# 两条硬约束：
-#   1. 全英文。内核控制台默认字体不含 CJK 字形，中文在物理屏幕/IPMI 上
-#      会显示成空白或问号。串口终端能显示中文不代表这里能用。
-#   2. 只用 ASCII 字符画。U+2588 之类的方块字符在很多 VGA 字体里缺字形，
-#      物理屏幕会变问号。下面的 7 行横幅是手排的字形，宽 54 列，
-#      80 列终端放得下；颜色用 ANSI，在串口和 VBE 控制台都生效。
+# 就四行信息：身份 + 内核、Web console、Project。不放大横幅 —— 这一屏每次
+# 登录/唤醒都会打一遍，占满整屏只会挡住要看的东西。
 #
-# 注意：下面的 \S \r \m 是 agetty 的 issue 转义，不是 shell 的。
-# 它们必须原样写进文件，所以这里用单引号 heredoc，且不经过 echo -e。
+# 两条硬约束（实测过的，别改）：
+#   1. 全英文。内核控制台默认字体不含 CJK 字形，中文在物理屏幕/IPMI 上
+#      显示成空白或问号。串口能显示中文不代表这里能用。
+#   2. 只用 ANSI 16 色的 SGR 码。物理 VGA/VBE 控制台只保证 16 色，
+#      256 色（38;5;n）和真彩色（38;2;r;g;b）会被忽略或错色。
 set -u
 OUT=/etc/issue.d/10-reinas.issue
 mkdir -p /etc/issue.d
@@ -214,29 +213,19 @@ ip=$(ip -4 -o addr show scope global 2>/dev/null \
 
 {
   echo
-  echo -e "\e[36m######   #######  ######   ##    ##    ##     ######\e[0m"
-  echo -e "\e[36m##   ##  ##         ##     ###   ##   ####   ##    ##\e[0m"
-  echo -e "\e[36m##   ##  ##         ##     ####  ##  ##  ##  ##\e[0m"
-  echo -e "\e[36m######   ######     ##     ## ## ## ##    ##  ######\e[0m"
-  echo -e "\e[36m## ##    ##         ##     ##  #### ########       ##\e[0m"
-  echo -e "\e[36m##  ##   ##         ##     ##   ### ##    ## ##    ##\e[0m"
-  echo -e "\e[36m##   ##  #######  ######   ##    ## ##    ##  ######\e[0m"
-  echo
-  # agetty 会把 \S 换成发行版名、\r 内核版本、\m 架构。
-  #
-  # ⚠️ 这三个反斜杠必须「原样」落到文件里。而 echo -e / printf 都会自己解析
-  #    反斜杠（\r 直接变成回车，把整行冲掉）。所以用一个变量存字面反斜杠，
-  #    再用 printf 的 %s 拼进去，避免任何一层做转义。
+  # \S = 发行版名，\r = 内核版本，\m = 架构。这些是 agetty 的 issue 转义，
+  # 不是 shell 的，必须原样落进文件。而 echo -e / printf 都会自己解析反斜杠
+  # （\r 直接变回车把整行冲掉），所以用 BS 变量存字面反斜杠再拼进去。
   BS='\'
-  printf '  \033[1mReiNAS%sS\033[0m  \033[2m|%sr on %sm\033[0m\n' \
-    "$BS" "$BS" "$BS"
+  printf '\033[1m%s\033[0m  \033[2m|%s\033[0m\n' \
+    "ReiNAS${BS}S" "${BS}r on ${BS}m"
   echo
   if [ -n "${ip:-}" ]; then
-    echo -e "  \e[1mWeb console\e[0m  \e[34mhttps://${ip}:9090\e[0m"
+    printf '\033[1mWeb console:\033[0m  \033[1;36mhttps://%s:9090\033[0m\n' "$ip"
   else
-    echo -e "  \e[1mWeb console\e[0m  \e[2mwaiting for network...\e[0m"
+    printf '\033[1mWeb console:\033[0m  \033[2mwaiting for network...\033[0m\n'
   fi
-  echo -e "  \e[2mProject\e[0m      https://github.com/ReiNAS-OS"
+  printf '\033[2mProject:\033[0m            https://github.com/ReiNAS-OS\n'
   echo
 } > "$OUT"
 chmod 0644 "$OUT"

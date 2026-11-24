@@ -228,6 +228,50 @@ jobs:
           if [ "$fail" != 0 ]; then exit 1; fi
           echo "  ✓ 结构正确：3 个 workflow，构建逻辑只有一份"
 
+      - name: 检查登录提示只用物理屏安全字符
+        run: |
+          # 登录提示要能在物理 VGA/VBE 控制台显示，所以：
+          #   - 只能 ASCII（CJK 在 VGA 字体里缺字形，会显示成空白/问号）
+          #   - 只能 ANSI 16 色 SGR（256 色/真彩色物理屏不支持）
+          #
+          # 用 python 而不是 grep/sed：BSD 与 GNU 工具对「非 ASCII / 非 printable」
+          # 的处理不一致（macOS 的 grep 没有 -P，sed 在 UTF-8 locale 下会把中文
+          # 当 printable 删掉），跨平台只有直接看字节可靠。
+          python3 - <<'PYEOF'
+          import re
+          import sys
+
+          src = open('kiwi/config.sh', encoding='utf-8').read()
+          m = re.search(
+              r"cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'\n(.*?)\nISSUEEOF",
+              src, re.S,
+          )
+          if not m:
+              sys.exit('  ✗ 找不到 reinas-issue-update 脚本')
+          body = m.group(1)
+
+          fail = 0
+          # 逐行检查，跳过注释行
+          for i, line in enumerate(body.split('\n'), 1):
+              if line.lstrip().startswith('#'):
+                  continue
+              for ch in line:
+                  if ord(ch) > 0x7F:
+                      print(f'  ✗ 第 {i} 行含非 ASCII 字符 {ch!r}'
+                            f'（物理控制台无法显示）')
+                      fail = 1
+                      break
+
+          # 256 色（38;5;n / 48;5;n）与真彩色（38;2;r;g;b）
+          if re.search(r'\\033\[(38|48);[25];', body):
+              print('  ✗ 用了 256 色或真彩色，物理控制台只支持 16 色')
+              fail = 1
+
+          if fail:
+              sys.exit(1)
+          print('  ✓ 登录提示只用 ASCII + ANSI 16 色')
+          PYEOF
+
       - name: 校验 reinas-release.spec 注释里没有百分号
         run: |
           # RPM 会把注释里的 % 当宏展开，导致 "Macro XXX has empty body"。
