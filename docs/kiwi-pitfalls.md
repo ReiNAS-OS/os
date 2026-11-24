@@ -130,6 +130,37 @@ type="delete">`，会被随后的删除阶段抹掉。当前描述文件里删�
 
 ---
 
+## btrfs 下 `rootflags` 会在内核参数里出现两次
+
+`btrfs_root_is_subvolume="true"` + `btrfs_set_default_volume="false"` 时，
+最终 BLS 条目的 `options` 行长这样：
+
+```
+options root=UUID=... ro rootflags=subvol=root  quiet console=tty0 console=ttyS0,115200n8 rootflags=subvol=root
+```
+
+`rootflags=subvol=root` 出现了两次。原因是 kiwi 两次都加：
+
+1. `kiwi/builder/disk.py` 直接往 boot options 里追加一次
+2. 同一个值又被塞进 `GRUB_CMDLINE_LINUX_DEFAULT`，BLS 生成时再带一次
+
+而 `kiwi/bootloader/config/grub2.py` 里剥离 `root=` 的正则只管 `root=`，
+不管 `rootflags=`：
+
+```python
+grub_final_cmdline = re.sub(
+    r'(^root=[^\s]+)|( root=[^\s]+)', '', self.cmdline
+).strip()
+```
+
+**影响**：无。内核把重复的 `rootflags=` 当同名参数处理，后一个覆盖前一个，
+两者值相同。系统能正常挂载根并启动到登录提示（实测）。
+
+**不要试图在 `fsmountoptions` 里去掉它** —— 那里本来就没有 `subvol`，加了反而
+多一份。这是 kiwi 的行为，不要打补丁（见本文末一节）。
+
+---
+
 ## 环境陷阱
 
 - **`config.sh` 在 chroot 里跑，`systemctl enable` 可能非零退出。** kiwi 用

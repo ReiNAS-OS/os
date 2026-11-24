@@ -63,13 +63,18 @@ fi
 # ============================================================
 #  4. 首启扩盘
 # ============================================================
-# kiwi 的 dracut-kiwi-oem-repart 在 initramfs 阶段做分区扩展，
-# systemd-repart 在这里兜底处理文件系统层的 grow。
-mkdir -p /etc/repart.d
-cat > /etc/repart.d/50-root.conf <<'EOF'
-[Partition]
-Type=root
-EOF
+# 扩盘完全由 kiwi 的 dracut 模块 kiwi-repart 在 initramfs 阶段完成
+# （dracut-kiwi-oem-repart，由 <oem-resize>true</oem-resize> 触发）。
+# 它在挂载 root 之前就重分区并把文件系统撑满，systemd 起来时盘已经是满的。
+#
+# ⚠️ 这里曾经写过 /etc/repart.d/50-root.conf 想用 systemd-repart 兜底，
+#    结果是每次启动都报：
+#      [FAILED] Failed to start systemd-repart.service - Repartition Root Disk.
+#    原因：那个配置只有 [Partition] Type=root，没有任何动作（缺 GrowFileSystem
+#    之类），systemd-repart 无事可做就非零退出。而真正的扩盘早就做完了，
+#    这个单位纯属多余，还制造了一条永久失败记录。
+#    已删除。不要再加回来 —— 想要它做事必须写全 Defines/Size/GrowFileSystem。
+#    实测：镜像 dd 到 8G 盘启动后根文件系统正常，扩盘机制不依赖 repart.d。
 
 # ============================================================
 #  5. 账号
@@ -185,28 +190,57 @@ firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || t
 #  9. 登录前提示（管理面板地址）
 # ============================================================
 install -d /usr/lib/reinas
-cat > /usr/lib/reinas/reinas-issue-update <<'EOF'
+cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'
 #!/bin/bash
-# 把管理面板地址写到 /etc/issue.d/，agetty 每次打印登录提示都会重读。
-# 注意：内核控制台字体装不下 CJK，这里必须全英文。
+# 生成登录前提示到 /etc/issue.d/，agetty 每次打印都会重读。
+#
+# 两条硬约束：
+#   1. 全英文。内核控制台默认字体不含 CJK 字形，中文在物理屏幕/IPMI 上
+#      会显示成空白或问号。串口终端能显示中文不代表这里能用。
+#   2. 只用 ASCII 字符画。U+2588 之类的方块字符在很多 VGA 字体里缺字形，
+#      物理屏幕会变问号。下面的 7 行横幅是手排的字形，宽 54 列，
+#      80 列终端放得下；颜色用 ANSI，在串口和 VBE 控制台都生效。
+#
+# 注意：下面的 \S \r \m 是 agetty 的 issue 转义，不是 shell 的。
+# 它们必须原样写进文件，所以这里用单引号 heredoc，且不经过 echo -e。
 set -u
 OUT=/etc/issue.d/10-reinas.issue
 mkdir -p /etc/issue.d
+
+# 排除 docker/veth/桥接/虚拟网卡，取第一个真实 IPv4
 ip=$(ip -4 -o addr show scope global 2>/dev/null \
      | awk '$2 !~ /^(docker|veth|br-|virbr|tun|wg)/ {print $4; exit}' \
      | cut -d/ -f1)
+
 {
   echo
+  echo -e "\e[36m######   #######  ######   ##    ##    ##     ######\e[0m"
+  echo -e "\e[36m##   ##  ##         ##     ###   ##   ####   ##    ##\e[0m"
+  echo -e "\e[36m##   ##  ##         ##     ####  ##  ##  ##  ##\e[0m"
+  echo -e "\e[36m######   ######     ##     ## ## ## ##    ##  ######\e[0m"
+  echo -e "\e[36m## ##    ##         ##     ##  #### ########       ##\e[0m"
+  echo -e "\e[36m##  ##   ##         ##     ##   ### ##    ## ##    ##\e[0m"
+  echo -e "\e[36m##   ##  #######  ######   ##    ## ##    ##  ######\e[0m"
+  echo
+  # agetty 会把 \S 换成发行版名、\r 内核版本、\m 架构。
+  #
+  # ⚠️ 这三个反斜杠必须「原样」落到文件里。而 echo -e / printf 都会自己解析
+  #    反斜杠（\r 直接变成回车，把整行冲掉）。所以用一个变量存字面反斜杠，
+  #    再用 printf 的 %s 拼进去，避免任何一层做转义。
+  BS='\'
+  printf '  \033[1mReiNAS%sS\033[0m  \033[2m|%sr on %sm\033[0m\n' \
+    "$BS" "$BS" "$BS"
+  echo
   if [ -n "${ip:-}" ]; then
-    echo "  ReiNAS management:  https://${ip}:9090"
+    echo -e "  \e[1mWeb console\e[0m  \e[34mhttps://${ip}:9090\e[0m"
   else
-    echo "  ReiNAS management:  waiting for network..."
+    echo -e "  \e[1mWeb console\e[0m  \e[2mwaiting for network...\e[0m"
   fi
-  echo "  Project:            https://github.com/ReiNAS-OS"
+  echo -e "  \e[2mProject\e[0m      https://github.com/ReiNAS-OS"
   echo
 } > "$OUT"
 chmod 0644 "$OUT"
-EOF
+ISSUEEOF
 chmod 0755 /usr/lib/reinas/reinas-issue-update
 
 cat > /etc/systemd/system/reinas-issue.service <<'EOF'
