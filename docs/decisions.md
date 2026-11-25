@@ -271,12 +271,6 @@ rpm 宏、dnf、包名、路径约定，全都是 Fedora 的。要么用 Fedora 
 
 **遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
 
-### 附带教训：那 5 处 kiwi 补丁是无效的
-
-过程中给 kiwi 打过 5 处源码补丁（裁 plugin 参数、去 `--config`、加 `--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：官方描述不加任何补丁也能推进到同一位置。补丁只让构建多跑十分钟，没解决任何问题。
-
-**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
-
 ---
 
 ## D-007：root 密码用显式开关，默认关闭

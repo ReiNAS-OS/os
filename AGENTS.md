@@ -36,6 +36,7 @@ packages/             自建 RPM（reinas-release 替代 fedora-release）
 scripts/build.sh      构建入口（--root-password / --lock 开关在这里）
 scripts/check-xml.py  描述文件静态检查
 scripts/smoke.sh      镜像内冒烟测试
+scripts/vm.sh         拉 CI 产物 + QEMU 起测（实现在 scripts/lib/）
 docs/decisions.md     技术决策记录，改架构前先读
 docs/kiwi-pitfalls.md kiwi 构建的坑：描述文件错误、执行顺序、环境陷阱
 docs/decisions-panel.md 面板相关决策（D-009 起）

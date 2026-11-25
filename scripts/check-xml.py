@@ -12,6 +12,24 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
+# Fedora 主版本。唯一出处是 files/releasever —— 那个文件会打进 RPM、装进
+# 镜像的 /etc/dnf/vars/releasever，是真正决定 $releasever 的东西。
+#
+# 别在这里再写一个 "45"：写死了就和 releasever 分家，升 Fedora 时两边会
+# 悄悄不一致，metalink 404 还查不出为什么。check_release_consistency()
+# 负责把另外三处对回这个值。
+RELEASEVER_FILE = Path(__file__).resolve().parent.parent / "packages/reinas-release/files/releasever"
+
+
+def fedora_release() -> str:
+    """读 files/releasever。读不到就是仓库坏了，直接抛。"""
+    return RELEASEVER_FILE.read_text(encoding="utf-8").strip()
+
+
+FEDORA_RELEASE = fedora_release()
+MIRROR = f"https://mirror.rackspace.com/fedora/releases/{FEDORA_RELEASE}"
+
+
 def check(path: Path, online: bool = False) -> int:
     src = path.read_text(encoding="utf-8")
     errs = []
@@ -100,12 +118,48 @@ def check(path: Path, online: bool = False) -> int:
     # 7. 包名对 Fedora 仓库的真实性校验（需要联网，失败时跳过）
     errs.extend(check_packages_exist(path, root, online))
 
+    # 8. Fedora 主版本在几处必须一致
+    errs.extend(check_release_consistency(path, root))
+
     return report(errs)
 
 
-# Fedora 主版本与元数据地址
-FEDORA_RELEASE = "45"
-MIRROR = f"https://mirror.rackspace.com/fedora/releases/{FEDORA_RELEASE}"
+def check_release_consistency(path: Path, root) -> list:
+    """校验 Fedora 主版本在各处一致。
+
+    `45` 散布在三个文件里，因为它们各有用途、没法互相 include：
+      files/releasever                     → 装成 /etc/dnf/vars/releasever，真正决定 $releasever
+      kiwi/reinas.kiwi <release-version>   → kiwi 生成产物和镜像元数据
+      reinas-release.spec fedora_release   → RPM 宏，Provides: system-release(releasever)
+
+    不一致的后果很难查：$releasever 一旦是 0.1.0，所有 metalink 404，但
+    构建本身照样成功。所以在这里硬性拦住。releasever 是基准值。
+    """
+    errs = []
+    base = FEDORA_RELEASE
+
+    rel = root.find("./preferences/release-version")
+    if rel is None:
+        errs.append(f"{path}: 缺少 <release-version>（应为 {base}）")
+    elif (rel.text or "").strip() != base:
+        got = (rel.text or "").strip()
+        errs.append(
+            f"{path}: <release-version>{got}</release-version> "
+            f"与 files/releasever 的 {base} 不一致"
+        )
+
+    spec = Path(__file__).resolve().parent.parent / "packages/reinas-release/reinas-release.spec"
+    if spec.exists():
+        m = re.search(r"^%global\s+fedora_release\s+(\S+)", spec.read_text(encoding="utf-8"), re.M)
+        if not m:
+            errs.append(f"{spec}: 找不到 %global fedora_release")
+        elif m.group(1) != base:
+            errs.append(
+                f"{spec}: %global fedora_release {m.group(1)} "
+                f"与 files/releasever 的 {base} 不一致"
+            )
+    return errs
+
 
 # 支持的架构。aarch64 的包名和 x86_64 不同（shim-aa64 vs shim-x64），
 # 所以每个架构的元数据要分开拉、分开校验。

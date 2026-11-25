@@ -12,9 +12,59 @@ sudo dnf install -y qemu-kvm qemu-img edk2-ovmf virt-install
 
 `edk2-ovmf` 提供 UEFI 固件，验证 Secure Boot 必需。
 
-### 0.1 构建时打开 root 密码
+**macOS（Apple Silicon）不需要 dnf**，装 qemu 就有固件：
 
-**必须做这一步，否则下文所有检查都进不去。** 默认构建出来的镜像：
+```bash
+brew install qemu
+```
+
+固件在 `/opt/homebrew/share/qemu/edk2-aarch64-code.fd` 和 `edk2-arm-vars.fd`。
+`scripts/vm.sh` 会自己找，不用配路径。
+
+### 0.1 直接拉 CI 产物起测
+
+不用在本机构建。CI 构建出的镜像带 root 密码，拉下来就能登：
+
+```bash
+cd os/
+./scripts/vm.sh list          # 看最近的构建
+./scripts/vm.sh pull          # 拉最新一次成功构建（约 500M raw.xz + 装机 ISO）
+./scripts/vm.sh boot          # 起虚机，串口控制台就是显示器
+
+# 控制台里
+reinas login: root
+Password:     123456
+```
+
+镜像里没装 controller 时也能跑 `scripts/smoke.sh` 之外的检查（身份、SELinux、
+分区、子卷）。要把 `smoke.sh` 或自己的二进制送进虚机，另开一个终端：
+
+```bash
+./scripts/vm.sh serve scripts/smoke.sh
+
+# 虚机里
+curl -O http://10.0.2.2:8000/smoke.sh
+bash smoke.sh
+```
+
+装机（`install`）也走同一条链路，全自动，约 10 分钟：
+
+```bash
+./scripts/vm.sh install      # 40G 空盘 + install.iso → 装好的盘
+BASE_IMAGE=$PWD/.vm/aarch64/install-target.raw ./scripts/vm.sh boot
+```
+
+`boot` 会给目标盘建 overlay，原盘只读，装一次可以反复起。
+
+`10.0.2.2` 是 QEMU user 网络的网关，固定值，不用配。
+
+**为什么不开 SSH**：镜像默认 `PasswordAuthentication no`（D-007），验证阶段的
+目标就是按真机的方式用 —— 插串口等于插显示器。开 SSH 端口会把一个生产镜像里
+不存在的入口带进测试环境。
+
+### 0.2 构建时打开 root 密码
+
+自己构建时**必须做这一步，否则下文所有检查都进不去。** 默认构建出来的镜像：
 
 - `root` 和 `reinas` 都是锁定密码
 - SSH 是 `PasswordAuthentication no`，且镜像里没有预置任何公钥
@@ -26,6 +76,8 @@ sudo ./scripts/build.sh --root-password     # root / 123456
 ```
 
 打开后直接以 `root` 密码登录，`scripts/smoke.sh` 也就能直接跑。
+
+**CI 上的构建默认也是关的**，手动触发时在 `root_password` 输入框填密码才会开。
 
 ---
 
@@ -42,49 +94,34 @@ sha256sum -c *.sha256
 
 ## 2. dd 镜像测试（对应"往服务器上装"）
 
-### 2.1 造一块目标盘并写入
+把 raw 当一块盘直接启动。`scripts/vm.sh boot` 干的就是这件事 —— 它建一个
+qcow2 overlay 盖在 raw 上，raw 保持只读，所以试坏了删 overlay 就行。
+
+```bash
+./scripts/vm.sh pull                          # 拉 CI 产物（含 raw.xz，boot 时自动解开）
+./scripts/vm.sh boot                          # 起虚机
+```
+
+要自己指定镜像：
+
+```bash
+BASE_IMAGE=/path/to/ReiNAS.x86_64-0.1.0.raw ./scripts/vm.sh boot
+```
+
+**手工 dd 到一块独立盘**（想验证「装到真盘上」这条路径时才需要）：
 
 ```bash
 cd out/
+xz -dk ReiNAS.x86_64-0.1.0-0.raw.xz          # CI 产物是压缩的，先解开
+sha256sum -c ReiNAS.x86_64-0.1.0-0.raw.xz.sha256   # 确认没解压坏
 
-# CI 产物是 xz 压缩的，先解开。文件名带 `-0` 是 RPM release 号，别漏。
-xz -dk ReiNAS.x86_64-0.1.0-0.raw.xz
-# → ReiNAS.x86_64-0.1.0-0.raw
-
-# 先验一下有没有解压坏
-sha256sum -c ReiNAS.x86_64-0.1.0-0.raw.xz.sha256
-
-# 造一块 40G 的假盘（比镜像大，用来验证扩盘）
-qemu-img create -f raw /tmp/target.img 40G
-
-# 写入
+qemu-img create -f raw /tmp/target.img 40G   # 比镜像大，用来验证扩盘
 dd if=ReiNAS.x86_64-0.1.0-0.raw of=/tmp/target.img \
    bs=4M conv=notrunc status=progress
 ```
 
-**两处容易踩的**：
-
-- **`conv=notrunc`**：不加的话 dd 会把目标文件截断到源文件大小，扩盘就测不出来了。
-- **文件名**：CI 产物是 `ReiNAS.x86_64-0.1.0.raw.xz`（压缩的）。构建脚本在
-  kiwi 产出 `ReiNAS.x86_64-0.1.0.raw` 之后自己 `xz` 压缩并删掉原文件，所以
-  拿到的只有 `.xz`。测试前先 `xz -dk` 解开。
-
-### 2.2 启动
-
-```bash
-qemu-system-x86_64 \
-  -enable-kvm -m 4096 -smp 2 \
-  -drive file=/tmp/target.img,format=raw,if=virtio \
-  -drive file=/usr/share/OVMF/OVMF_CODE.fd,format=raw,if=pflash,readonly=on \
-  -drive file=/tmp/OVMF_VARS.fd,format=raw,if=pflash \
-  -serial mon:stdio
-```
-
-先把 `OVMF_VARS.fd` 复制一份可写副本：
-
-```bash
-cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
-```
+**`conv=notrunc` 不能省**：不加的话 dd 会把目标文件截断到源文件大小，扩盘
+就测不出来了。
 
 ### 2.3 验证清单
 
@@ -124,18 +161,21 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 ### 3.1 启动装机盘
 
 ```bash
-qemu-img create -f raw /tmp/install-target.img 40G
-
-qemu-system-x86_64 \
-  -enable-kvm -m 4096 -smp 2 \
-  -cdrom ReiNAS.x86_64-0.1.0-0.install.iso \
-  -drive file=/tmp/install-target.img,format=raw,if=virtio \
-  -boot d \
-  -serial mon:stdio
+./scripts/vm.sh install        # 造 40G 空盘 + 起装机器，自动应答确认框
 ```
 
-注意 ISO 的名字不带 release 号 `-0`（raw 带，ISO 不带），这是 kiwi 的命名规则。
-在 `out/` 里 `ls *.iso` 确认。
+约 10 分钟。装好的盘在 `.vm/<arch>/install-target.raw`，能直接起：
+
+```bash
+BASE_IMAGE=$PWD/.vm/aarch64/install-target.raw ./scripts/vm.sh boot
+```
+
+盘大小用 `INSTALL_TARGET` 改（默认 `40G`）。
+
+**不要照着手写 `-cdrom` 起装机盘。** ISO 里 GRUB 的 serial 模块没编进去，
+菜单收不到按键，5 秒后自动选「Boot from Hard Disk」直接退出，看起来像镜像
+坏了。`vm.sh install` 用 `-kernel` 直启绕过了这一步，原因见文末
+「在 QEMU 里装机的两个坑」。
 
 ### 3.2 验证清单
 
@@ -200,10 +240,72 @@ sshd 配置、服务 enable 状态、btrfs 根与子卷、压缩挂载、关键�
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 完整构建 | ✅ | CI 成功，产物已作为 artifact 上传（`.raw.xz` 626 MB、`.install.iso` 863 MB） |
-| 调试账号开关 | ⏳ | 逻辑本地验过（空文件/密码内容/元字符/换行），未在真镜像里跑过 |
-| 镜像能启动 | ⏳ | 产物已出，尚未在 QEMU 里跑过 |
+| 完整构建 | ✅ | CI 成功，产物作为 artifact 上传（aarch64：`.raw.xz` 493 MB、`.install.iso` 725 MB） |
+| 调试账号开关 | ✅ | aarch64 实测：控制台 `root` / `123456` 能登，`passwd -S root` 为 `P`，`/etc/reinas/BUILD-HAS-ROOT-PASSWORD` 存在 |
+| 镜像能启动 | ✅ | aarch64 + QEMU hvf 实测：GRUB → 内核 → systemd → 串口 agetty，冷启动约 20 秒 |
+| 控制台 SSH 密码登录 | ❌ | 构建里 `10-reinas.conf` 关掉密码登录，`20-reinas-root.conf` 想打开，但 sshd 是**先读到的值生效**，`10` 在 `20` 前面，覆盖不成立。控制台能登、SSH 不能。改法见下 |
+| 装机（install.iso → 空盘） | ✅ | aarch64 实测：`./scripts/vm.sh install` 全自动跑完，装好的盘能起 GRUB → 登录提示 |
+| 首启扩盘 | ✅ | 装到 40G 盘实测：根分区 39G、`vda3` 38.5G（镜像本体 8G）。QEMU 已验证，真机未测 |
+| btrfs 子卷 | ✅ | 装好的系统里 `btrfs subvolume list /` 有 root / home / var / srv 四个 |
 | 扩盘在真机上生效 | ⏳ | 目前只在 QEMU 测 |
 | Secure Boot 真机启动 | ⏳ | 需 OVMF + 真机双验证 |
-| aarch64 构建 | ❌ | `preferences arch="aarch64"` 存在但没有 aa64 的 shim/grub 包，永远跑不通 |
+| aarch64 构建 | ✅ | CI 用 `ubuntu-26.04-arm` 原生构建成功，产物可启动。旧记录说「没 aa64 的 shim/grub 包」已过时 |
 | 跨 Fedora 版本升级 | ❌ | 0.3 之前不做，见 decisions.md |
+
+### sshd drop-in 覆盖顺序的坑
+
+`config.sh` 里两个 drop-in 互相打架：
+
+```
+10-reinas.conf        PermitRootLogin prohibit-password / PasswordAuthentication no
+20-reinas-root.conf   PermitRootLogin yes / PasswordAuthentication yes   ← 只在 --root-password 时写
+```
+
+sshd 对同一个选项**取第一次读到的值**，不是最后一次。`10-` 排在 `20-` 前面，
+所以硬化段的 `no` 永远赢。`--root-password` 构建出的镜像控制台能登录，SSH 里
+`Permission denied (publickey,...)`。
+
+修法二选一：把放开密码的 drop-in 改成 `05-reinas-root.conf`（排在前面），
+或者让 `10-reinas.conf` 在设置密码时不写这两行。前者改动更小。
+
+本地验证用 QEMU 串口进去看，不要开 SSH 端口 —— 镜像默认就不该开密码登录，
+验证阶段也应该按真机的方式走。
+
+### 在 QEMU 里装机的两个坑
+
+`./scripts/vm.sh install` 已经把这两个都绕开了，记下来免得下次重新踩。
+
+**1. 不能直接 `-cdrom` 启动 install.iso。**
+
+ISO 里的 `boot/grub2/grub.cfg` 写了两行：
+
+```
+terminal_input serial
+terminal_output serial
+```
+
+但这版 GRUB 没编进 serial 模块，两行都执行失败（日志里的
+``terminal `serial' isn't found``）。GRUB 于是收不到任何按键，
+5 秒超时后自动执行第一个菜单项 —— 也就是 `Boot from Hard Disk`，直接 exit。
+
+解法：把 ISO 里的 `boot/<arch>/loader/linux` 和 `initrd` 抽出来，用
+`-kernel` / `-initrd` 直接启动。装机的 GRUB 菜单里唯一有用的选项就是
+「Install ReiNAS」，跳过选择不影响任何东西。ISO 仍要挂着，
+`root=install:CDLABEL=REINAS_OS` 靠它找 squashfs。
+
+**2. 装机的确认框要往串口写，不是往 monitor 发 sendkey。**
+
+kiwi 的 oem 安装器会问 `Destroying ALL data on /dev/vda, continue ?`。
+这个 dialog 读的是内核控制台 `ttyAMA0`：
+
+- QEMU monitor 的 `sendkey` 注入的是 USB/PS2 键盘设备，dialog 收不到
+- `-serial file:` 是单向的，写不进去
+- 正解是 `-chardev socket,...,logfile=...` + `-serial chardev:ser0`：
+  socket 用来写确认键，logfile 用来读日志
+
+日志必须走 chardev 的 `logfile=` 参数，不要在宿主 `nc -U` 去读 socket ——
+实测连上去收不到字节。
+
+**为什么装机必须重铺固件变量盘。** `OVMF_VARS.fd` 会记住上次启动注册的
+`BootXXXX` 项。那些项指向 `boot` 用过的那块 overlay，装机时那块盘不在，
+UEFI 会一直试它然后退回 PXE，看起来像装机盘没做对引导。

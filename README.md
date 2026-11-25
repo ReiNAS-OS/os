@@ -28,6 +28,30 @@ sudo ./scripts/build.sh --root-password    # 开发构建：root / 123456
 
 产物在 `out/`。
 
+### 拉 CI 产物直接起测
+
+不想在本机构建（macOS 建不了，见 D-006），拉 CI 的镜像用 QEMU 跑：
+
+```bash
+./scripts/vm.sh list      # 看最近的构建
+./scripts/vm.sh pull      # 拉最新一次成功构建到 .vm/<arch>/
+./scripts/vm.sh boot      # 起虚机，串口控制台
+```
+
+控制台提示 `reinas login:` 输 `root` / `123456`（CI 构建时开了 root 密码）。
+Apple Silicon 默认拉 aarch64 —— `qemu-system-x86_64` 在这台机器上只有 tcg，
+启动要 5-15 分钟；aarch64 有 hvf，20 秒。
+
+往虚机里送文件用 `./scripts/vm.sh serve <file>`，虚机里 `curl 10.0.2.2:8000/<file>`。
+不开 SSH：镜像默认禁密码登录，验证阶段按真机方式走串口。
+
+装机盘也能全自动跑（约 10 分钟），装好的盘可以反复起：
+
+```bash
+./scripts/vm.sh install     # install.iso → .vm/<arch>/install-target.raw（40G）
+BASE_IMAGE=$PWD/.vm/aarch64/install-target.raw ./scripts/vm.sh boot
+```
+
 ### root 密码（默认关闭）
 
 默认构建出来的镜像**没有任何口令，SSH 只认公钥，而镜像里也没有公钥** ——
@@ -105,7 +129,9 @@ os/
 ├── scripts/
 │   ├── build.sh           # 构建入口
 │   ├── check-xml.py       # 描述文件静态检查（含包名真实性）
-│   └── smoke.sh           # 镜像内冒烟测试
+│   ├── smoke.sh           # 镜像内冒烟测试
+│   ├── vm.sh              # 拉 CI 产物 + QEMU 起测（实现在 lib/）
+│   └── lib/               # vm.sh 的实现，按关心的事分文件
 ├── rpms/                  # 编译产物 + createrepo 元数据（git 忽略）
 └── out/                   # 镜像产物（git 忽略）
 ```
