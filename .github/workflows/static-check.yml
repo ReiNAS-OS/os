@@ -234,6 +234,55 @@ jobs:
           if [ "$fail" != 0 ]; then exit 1; fi
           echo "  ✓ 结构正确：3 个 workflow，构建逻辑只有一份"
 
+      - name: 扫描 .github 下的表达式是否合法
+        run: |
+          # run: 脚本和 action.yml 里出现的表达式会被 GitHub 求值。只要根标识符
+          # 不在可用上下文里（github / inputs / env / …），就是 Unrecognized
+          # named-value：模板解析失败，整个 workflow 加载不起来。
+          #
+          # 症状很好认 —— run 显示成文件名而不是中文名、jobs 数为 0、
+          # 持续 0 秒就 failure。踩过三次，都是往脚本里塞了表达式字面量。
+          #
+          # 这里用 python 逐个扫，不写表达式字面量（用 OPEN 拼接避开扫描）。
+          python3 - <<'PY'
+          import re, sys, pathlib
+
+          OPEN = "$" + "{{"
+          CLOSE = "}}" + ""
+
+          ROOTS = {
+              'github', 'env', 'vars', 'secrets', 'inputs', 'needs', 'strategy',
+              'matrix', 'job', 'jobs', 'steps', 'runner', 'container',
+              'always', 'success', 'failure', 'cancelled',
+              'fromJSON', 'toJSON', 'hashFiles', 'format',
+              'contains', 'startsWith', 'endsWith', 'join',
+          }
+
+          bad = []
+          files = sorted(pathlib.Path('.github').rglob('*.yml'))
+          for f in files:
+              text = f.read_text(encoding='utf-8')
+              # 只处理成对闭合的表达式
+              for m in re.finditer(re.escape(OPEN) + r'(.*?)' + re.escape(CLOSE),
+                                   text, re.S):
+                  body, line = m.group(1), text[:m.start()].count('\n') + 1
+                  # 去掉字符串字面量，别把 'ubuntu-26.04' 当标识符
+                  flat = re.sub(r"'[^']*'|\"[^\"]*\"", " ", body)
+                  for root in re.findall(r'(?<![.\w-])([A-Za-z_][\w-]*)', flat):
+                      if root in ROOTS or root in ('true', 'false', 'null'):
+                          continue
+                      bad.append(f"{f}:{line}: 根标识符 {root!r} 不是可用上下文")
+                      break
+
+          if bad:
+              print("这些表达式会让 GitHub 拒绝加载整个 workflow：")
+              for b in bad:
+                  print(f"  ✗ {b}")
+              print("症状：run 名退化成文件名、jobs 为 0、0 秒失败。")
+              sys.exit(1)
+          print(f"  ✓ {len(files)} 个 .github yml，表达式根上下文全部合法")
+          PY
+
       - name: 检查登录提示只用物理屏安全字符
         run: |
           # 登录提示要能在物理 VGA/VBE 控制台显示，所以：
@@ -325,6 +374,13 @@ jobs:
           python3 - <<'PY'
           import re, sys, pathlib
 
+          # 报错信息里要显示花括号引用，但源码里绝不能出现那个连续序列：
+          # GitHub 会把 run: 里的表达式字面量当真求值，模板解析失败，
+          # 整个 workflow 加载不起来，run 名字退化成文件路径、0 秒失败
+          # （踩过三次，这次用拼接彻底断开）。
+          OPEN = "$" + "{"
+          CLOSE = "}" + ""
+
           bad = []
           for f in sorted(pathlib.Path("scripts").glob("*.sh")):
               lines = f.read_text().splitlines()
@@ -362,7 +418,7 @@ jobs:
               # 只报「全小写或下划线命名、长度 > 4」的，减少误报
               for v in sorted(refs - assigned - known):
                   if re.fullmatch(r'[a-z][a-z0-9_]{4,}', v):
-                      bad.append(f"{f}: 引用了 ${{{v}}} 但从没赋值")
+                      bad.append(f"{f}: 引用了 {OPEN}{v}{CLOSE} 但从没赋值")
 
           if bad:
               print("set -u 下会中止脚本的变量引用：")
