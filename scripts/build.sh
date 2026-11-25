@@ -321,10 +321,25 @@ build_image() {
         --description "$KIWI_DIR" \
         --target-dir "$OUT_DIR"
 
+    # 压缩 raw。8G 的原始文件压到 ~620MB，分发时省带宽也省用户下载时间。
+    #
+    # -T0 用所有核心。xz 的单线程很慢（8G 要十几分钟），多线程能压到 2-3 分钟。
+    # -6 是默认档位，实测和 -9 差不到 1%，但快好几倍。
+    #
+    # 压缩完删掉未压缩的：CI 上传 artifact 时两个都传太浪费。
+    # 需要未压缩版本时用 xz -dk 就地解开。
+    local raw
+    raw=$(find "$OUT_DIR" -maxdepth 1 -name '*.raw' -print -quit 2>/dev/null || true)
+    if [ -n "$raw" ]; then
+        log "压缩 $(basename "$raw")"
+        $SUDO xz -T0 -6 -f "$raw"
+        ok "已压缩: $(basename "$raw").xz"
+    fi
+
     echo
     log "产物"
     ls -lh "$OUT_DIR" | sed 's/^/    /'
-    for f in "$OUT_DIR"/*.raw "$OUT_DIR"/*.install.iso; do
+    for f in "$OUT_DIR"/*.raw.xz "$OUT_DIR"/*.install.iso; do
         [ -e "$f" ] || continue
         ( cd "$OUT_DIR" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256" )
     done
