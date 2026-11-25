@@ -15,7 +15,7 @@
 #   ./scripts/build.sh --lock-out            # 构建后导出 out/*.lock
 #   ./scripts/build.sh --lock path/to.lock   # 按锁文件复现
 #
-# 走 kiwi 官方的 boxbuild 路径（完整 /dev + udev 的虚拟机内构建）。
+# 直接在宿主机跑 kiwi-ng system build，不套 VM。宿主要有完整 /dev（udev 在跑）。
 # 为什么不用容器或手搭 chroot：见 docs/decisions.md D-006。
 #
 # root 密码（D-007）：
@@ -31,7 +31,13 @@ cd "$REPO_ROOT"
 KIWI_DIR="$REPO_ROOT/kiwi"
 OUT_DIR="$REPO_ROOT/out"
 PROFILE="${PROFILE:-Disk}"
-BOX="${BOX:-fedora}"
+
+# 目标架构。空 = 用宿主架构。
+# 显式指定时传给 kiwi 的 --target-arch，让它选对应的 <preferences arch="...">。
+#
+# 为什么不做交叉构建：kiwi 装包的脚本要能执行，跨架构跑不起来。
+# 要出 aarch64 镜像就在 arm64 runner 上跑，原生构建，不交叉。
+TARGET_ARCH="${TARGET_ARCH:-}"
 
 # root 密码开关（D-007）。空 = 锁定 root，与生产形态一致。
 # build.sh 会把它写成 kiwi/root.conf，由描述文件的 <file> 带进镜像，
@@ -58,13 +64,13 @@ install_deps() {
     local dnf
     dnf=$(command -v dnf5 || command -v dnf) || die "找不到 dnf，请在 Fedora 上运行"
     $SUDO "$dnf" install -y -q --skip-unavailable \
-        kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild \
+        kiwi-cli kiwi-systemdeps-filesystems kiwi-systemdeps-bootloaders \
         distribution-gpg-keys createrepo_c rpm-build python3-zstandard
     ok "依赖就绪"
 }
 
 build_rpm() {
-    log "编译 reinas-release"    # 产物必须落在 kiwi/rpms：boxbuild 只共享 description 目录，
+    log "编译 reinas-release"    # 产物必须落在 kiwi/rpms：kiwi 只把 description 目录当仓库源，
     # 描述文件里用 this://./rpms 引用它。
     local rpm_dir="$KIWI_DIR/rpms"
     mkdir -p "$rpm_dir" "$OUT_DIR"
@@ -86,7 +92,7 @@ build_rpm() {
     ok "产物: $(basename "$rpm_dir"/reinas-release-*.noarch.rpm)"
 
     # 必须生成仓库元数据：kiwi 把 reinas 当 rpm-md 仓库用，
-    # 只有 rpm 文件没有 repodata 的话，boxbuild 里会报
+    # 只有 rpm 文件没有 repodata 的话，kiwi 会报
     #   Failed to download metadata (baseurl: "file:///description/rpms/")
     log "生成仓库元数据"
     command -v createrepo_c >/dev/null || die "找不到 createrepo_c"
@@ -195,7 +201,7 @@ apply_lock() {
     local lock="$1"
     [ -f "$lock" ] || die "找不到锁文件: $lock"
 
-    # 锁文件放在 kiwi/ 外面时，boxbuild 也看不到；所以派生描述放 kiwi/
+    # 锁文件放在 kiwi/ 外面时 kiwi 看不到；所以派生描述放 kiwi/
     local locked_desc="$KIWI_DIR/reinas.locked.kiwi"
 
     log "按锁文件构建: $(basename "$lock")"
@@ -244,7 +250,7 @@ PY
 }
 
 build_image() {
-    log "构建镜像 profile=$PROFILE box=$BOX"
+    log "构建镜像 profile=$PROFILE arch=${TARGET_ARCH:-宿主}"
 
     write_root_conf
 
@@ -274,8 +280,8 @@ build_image() {
 
     mkdir -p "$OUT_DIR"
 
-    # 全局选项（--type/--profile/--logfile/--kiwi-file）必须在子命令之前，
-    # 子命令选项（--description/--target-dir）在 boxbuild 的 "kiwi" 之后。
+    # 全局选项（--type/--profile/--logfile/--target-arch/--kiwi-file）必须在
+    # 子命令之前，子命令选项（--description/--target-dir）在 "system build" 之后。
     #
     # ⚠️ 锁定构建必须显式 --kiwi-file。kiwi 找描述文件时对 *.kiwi 做 glob
     #    然后 sorted 取第一个，reinas.locked.kiwi 排在 reinas.kiwi 前面，
@@ -285,10 +291,33 @@ build_image() {
         kiwi_file_opt=(--kiwi-file "$(basename "$desc")")
     fi
 
+    # --target-arch 让 kiwi 选匹配的 <preferences arch="...">。不传则用宿主架构。
+    local arch_opt=()
+    if [ -n "$TARGET_ARCH" ]; then
+        arch_opt=(--target-arch "$TARGET_ARCH")
+        log "目标架构：$TARGET_ARCH"
+    fi
+
+    # 跑 kiwi-ng system build，不套 boxbuild 的 VM。
+    #
+    # 为什么不用 boxbuild：
+    #   1. arm64 runner 没有 /dev/kvm，QEMU 起不来：
+    #        qemu-system-aarch64: -accel accel=kvm: Could not access KVM
+    #   2. boxbuild 的 VM 只是为了提供「有 udev 的完整环境」。CI 已经在
+    #      Fedora chroot 里跑，chroot bind 了宿主的 /dev，而 udev 在 runner
+    #      上跑着，/dev/loopNpX 能正常创建。
+    #
+    # kiwi 维护者 Conan-Kudo 在 mock#1554 的说法：非 VM 的镜像类型用
+    # simple isolation/chroot 模式即可。
+    #
+    # 前提：本机（或 CI 的 chroot）是 Fedora，装了 kiwi 和系统依赖。
+    # 本地装依赖用 --deps；CI 见 .github/actions/build-image/action.yml
+    # 的「安装 kiwi」步骤。
     $SUDO kiwi-ng --type oem --profile "$PROFILE" \
         --logfile "$OUT_DIR/kiwi-build.log" \
+        "${arch_opt[@]}" \
         "${kiwi_file_opt[@]}" \
-        system boxbuild --box "$BOX" kiwi \
+        system build \
         --description "$KIWI_DIR" \
         --target-dir "$OUT_DIR"
 
@@ -321,6 +350,9 @@ while [ $# -gt 0 ]; do
         --deps)       ACTION=deps ;;
         --rpm-only)   ACTION=rpm ;;
         --list-boxes) ACTION=boxes ;;
+        # 只跑构建（不装依赖）。CI 用它：runner 上的依赖由 workflow 自己准备，
+        # 而 install_deps 走 dnf，Ubuntu 上没有。
+        --build-only) ACTION=build ;;
         --clean)      rm -rf "$OUT_DIR"; mkdir -p "$OUT_DIR"; ok "已清空 out/" ;;
         # 版本锁定（D-008）
         --lock-out)      LOCK_OUT=1 ;;
@@ -361,5 +393,6 @@ case "$ACTION" in
     deps)  install_deps ;;
     rpm)   build_rpm ;;
     boxes) kiwi-ng system boxbuild --list-boxes ;;
+    build) build_rpm; build_image ;;
     all)   install_deps; build_rpm; build_image ;;
 esac

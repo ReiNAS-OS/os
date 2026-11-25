@@ -171,17 +171,26 @@
     <package name="kernel-core"/>
     <package name="kernel-modules"/>
     <package name="kernel-modules-extra"/>
-    <package name="shim-x64" arch="x86_64"/>
     <!--
-      grub 全套。grub2-pc 提供 i386-pc 模块（BIOS 兼容引导），
-      只装 grub2-efi-x64 会报：
+      引导链按架构分两套。x86_64 走 shim-x64 + grub2-efi-x64，aarch64 走
+      shim-aa64 + grub2-efi-aa64。
+
+      为什么必须用 Fedora 已签名的原件（D-003）：换成自编译版本会让 Secure
+      Boot 链断掉。
+
+      aarch64 没有 BIOS 兼容引导这回事，所以 grub2-pc 系列只在 x86_64 出现。
+      x86_64 又必须装 grub2-pc，只装 efi-x64 会报：
         KiwiBootLoaderGrubDataError: grub path i386-pc not found
-      Fedora 官方描述同时装 efi-x64 / efi-ia32 / pc 三个。
     -->
+    <package name="shim-x64" arch="x86_64"/>
     <package name="grub2-efi-x64" arch="x86_64"/>
     <package name="grub2-efi-x64-modules" arch="x86_64"/>
     <package name="grub2-pc" arch="x86_64"/>
     <package name="grub2-pc-modules" arch="x86_64"/>
+
+    <package name="shim-aa64" arch="aarch64"/>
+    <package name="grub2-efi-aa64" arch="aarch64"/>
+    <package name="grub2-efi-aa64-modules" arch="aarch64"/>
     <package name="grub2-tools"/>
     <package name="grub2-tools-minimal"/>
     <package name="grub2-tools-extra"/>
@@ -320,6 +329,9 @@
     <packages type="iso" profiles="BootCore,BootCoreLive"> 里。
   -->
   <packages type="iso" patternType="onlyRequired">
+    <!-- El Torito 的 EFI 引导镜像。缺了 UEFI 启动是空的。
+         aarch64 的 ISO 引导由 grub2-efi-aa64-modules 里的 cdboot 提供，
+         不在单独包里，所以这里只有 x86_64 的 cdboot 包。 -->
     <package name="grub2-efi-x64-cdboot" arch="x86_64"/>
     <package name="grub2-efi-ia32-cdboot" arch="x86_64"/>
   </packages>

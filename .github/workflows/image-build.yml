@@ -22,11 +22,24 @@ on:
         description: "root 密码（留空=锁定 root，生产形态）"
         default: ""
         type: string
+      arch:
+        description: "目标架构。aarch64 用 arm64 runner，构建更快"
+        type: choice
+        default: x86_64
+        options:
+          - x86_64
+          - aarch64
 
 jobs:
   build:
-    name: 构建 ReiNAS 镜像
-    runs-on: ubuntu-latest
+    name: 构建 ReiNAS 镜像（${{ inputs.arch || 'x86_64' }}）
+    # aarch64 用 GitHub 的 arm64 runner。公开仓库免费且不限量。
+    # 产物在目标架构上原生构建，不需要交叉编译。
+    #
+    # ⚠️ arm64 没有 ubuntu-latest-arm 这个标签，必须写具体版本。
+    #    x64 的 ubuntu-latest 已于 2026-11 迁到 26.04，两边对齐成 26.04。
+    #    升级 runner 镜像时两处一起改（见 README 的「升级到下一个 Fedora」）。
+    runs-on: ${{ (inputs.arch == 'aarch64') && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 90
 
     steps:
@@ -38,6 +51,7 @@ jobs:
         with:
           profile: ${{ inputs.profile || 'Disk' }}
           root-password: ${{ inputs.root_password || '' }}
+          arch: ${{ inputs.arch || 'x86_64' }}
           # 始终导出锁文件：把这次实际装到的版本记下来，作为产物一起分发。
           # 想复现时用「锁定重建」workflow 拿它重建（D-008）。
           lock-out: "1"
@@ -46,7 +60,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: build-log
+          name: build-log-${{ inputs.arch || 'x86_64' }}
           path: build.log
           retention-days: 14
 
@@ -56,7 +70,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: reinas-raw
+          name: reinas-raw-${{ inputs.arch || 'x86_64' }}
           path: |
             out/*.raw
             out/*.raw.xz
@@ -69,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: reinas-lock
+          name: reinas-lock-${{ inputs.arch || 'x86_64' }}
           path: out/*.lock
           if-no-files-found: warn
           retention-days: 90
@@ -78,7 +92,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: reinas-install-iso
+          name: reinas-install-iso-${{ inputs.arch || 'x86_64' }}
           path: out/*.install.iso
           archive: false
           retention-days: 14

@@ -30,6 +30,13 @@ License:        MIT
 URL:            https://github.com/ReiNAS-OS
 BuildArch:      noarch
 BuildRequires:  systemd-rpm-macros
+#
+# 这个依赖是必须的，不是因为 systemd_post 那些脚本宏（确实没用），
+# 而是它定义了 presetdir / userpresetdir / unitdir 这些路径宏。
+# files 段里有 9 处引用，缺了 rpmbuild 直接报：
+#   error: File must begin with "/": <presetdir>/90-default.preset
+#
+# 构建环境必须是 Fedora（CI 用 Fedora 45 的 chroot），Ubuntu 上没这个包。
 
 # ─────────────────────────────────────────────────────────────────────
 # 兼容性层

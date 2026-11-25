@@ -105,19 +105,25 @@ def check(path: Path, online: bool = False) -> int:
 
 # Fedora 主版本与元数据地址
 FEDORA_RELEASE = "45"
-REPOMD = (
-    f"https://mirror.rackspace.com/fedora/releases/{FEDORA_RELEASE}"
-    "/Everything/x86_64/os/repodata/repomd.xml"
-)
+MIRROR = f"https://mirror.rackspace.com/fedora/releases/{FEDORA_RELEASE}"
+
+# 支持的架构。aarch64 的包名和 x86_64 不同（shim-aa64 vs shim-x64），
+# 所以每个架构的元数据要分开拉、分开校验。
+SUPPORTED_ARCHES = ("x86_64", "aarch64")
 
 
-def _fetch_available_packages() -> set:
-    """下载 Fedora 的 primary 元数据，返回可用包名集合。"""
+def _repomd_url(arch: str) -> str:
+    return f"{MIRROR}/Everything/{arch}/os/repodata/repomd.xml"
+
+
+def _fetch_available_packages(arch: str) -> set:
+    """下载指定架构的 Fedora primary 元数据，返回可用包名集合。"""
     import urllib.request
     import zlib
 
-    repomd = urllib.request.urlopen(REPOMD, timeout=60).read().decode()
-    base = REPOMD.rsplit("/repodata/", 1)[0]
+    repomd_url = _repomd_url(arch)
+    repomd = urllib.request.urlopen(repomd_url, timeout=60).read().decode()
+    base = repomd_url.rsplit("/repodata/", 1)[0]
 
     # Fedora 的 primary 元数据默认是 .zst。优先找 .gz，避免依赖 zstandard；
     # 只有 .zst 时才需要第三方模块。
@@ -161,7 +167,8 @@ def _fetch_available_packages() -> set:
         b = m.group(1)
         n = re.search(rb"<name>(.*?)</name>", b).group(1).decode()
         a = re.search(rb"<arch>(.*?)</arch>", b).group(1).decode()
-        if a in ("x86_64", "noarch"):
+        # noarch 的包两种架构都有，一并收进来
+        if a in (arch, "noarch"):
             names.add(n)
     return names
 
@@ -178,12 +185,17 @@ def check_packages_exist(path: Path, root, online: bool) -> list:
         return []
 
     self_built = {"reinas-release"}
-    try:
-        avail = _fetch_available_packages()
-    except Exception as e:
-        # 显式要求 --online 就是要求真校验。拿不到元数据算失败，
-        # 不能报「通过」—— 那会让漏包一直漂到构建末尾才炸。
-        return [f"{path}: 包名校验失败，拿不到 Fedora 元数据（{e}）"]
+
+    # 按架构分别拉元数据。包名是分架构的（shim-x64 / shim-aa64），
+    # 混在一起校验会把正常包报成不存在。
+    avail: dict[str, set] = {}
+    for arch in SUPPORTED_ARCHES:
+        try:
+            avail[arch] = _fetch_available_packages(arch)
+        except Exception as e:
+            # 显式要求 --online 就是要求真校验。拿不到元数据算失败，
+            # 不能报「通过」—— 那会让漏包一直漂到构建末尾才炸。
+            return [f"{path}: 包名校验失败，拿不到 {arch} 的 Fedora 元数据（{e}）"]
 
     bad = []
     for sec in root.findall(".//packages"):
@@ -194,8 +206,16 @@ def check_packages_exist(path: Path, root, online: bool) -> list:
                 continue
             if any(c in name for c in "*?["):
                 continue
-            if name not in avail:
-                bad.append(f"{path}: [{sec_type}] 包名不存在: {name}")
+
+            # <package arch="..."> 限定架构时只在该架构里找；
+            # 不写 arch 则两种架构都必须有（默认包会装到所有架构）。
+            pkg_arch = pkg.get("arch")
+            arches = [pkg_arch] if pkg_arch else list(SUPPORTED_ARCHES)
+
+            missing = [a for a in arches if a in avail and name not in avail[a]]
+            if missing:
+                where = "、".join(missing)
+                bad.append(f"{path}: [{sec_type}] 包名在 {where} 里不存在: {name}")
     return bad
 
 

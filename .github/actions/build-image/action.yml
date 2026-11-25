@@ -1,6 +1,10 @@
 name: 构建镜像
 description: |
-  在 Fedora 45 的 chroot 里跑 kiwi boxbuild，产出镜像。
+  在 runner 上直接跑 kiwi-ng system build，产出镜像。
+
+  不套 VM、不套 chroot：runner 本身是完整 Linux（systemd-udevd 在跑、
+  /dev/loopN 齐全），kiwi 需要的东西都有。arm64 runner 没有 /dev/kvm，
+  套 VM 也起不来。
   前提：调用方已 checkout 仓库，且工作目录就是仓库根。
 
   ⚠️ 这个 composite action 不含 checkout —— 调用方 checkout 之后才能用，
@@ -27,54 +31,109 @@ inputs:
     description: "root 密码。留空 = 锁定 root（生产形态）"
     required: false
     default: ""
+  arch:
+    description: "目标架构（x86_64 / aarch64）。不传则用 runner 自身架构。"
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
     - name: 检查宿主环境
       shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
       run: |
-        echo "arch: $(uname -m)"
+        echo "runner arch: $(uname -m)"
+        echo "target arch: ${TARGET_ARCH:-（同 runner）}"
         echo "kernel: $(uname -r)"
+        echo "ubuntu: $(cat /etc/os-release | grep PRETTY_NAME)"
         ls /dev/kvm 2>&1 || echo "无 /dev/kvm"
         ls /dev/loop* 2>&1 | head -3
         systemctl is-active systemd-udevd || true
         df -h /
+        # /tmp 在 Ubuntu 26.04 上默认是 tmpfs，配额约内存的一半。
+        # boxbuild 要在里面造 8G 镜像，空间不够会在最末尾炸。
+        findmnt -no FSTYPE,SIZE /tmp || true
+
+    - name: 检查 /tmp 是否够用
+      shell: bash
+      run: |
+        set -e
+        fstype=$(findmnt -no FSTYPE /tmp 2>/dev/null || echo unknown)
+        avail=$(df -BG --output=avail /tmp 2>/dev/null | tail -1 | tr -dc '0-9')
+        echo "/tmp 类型 $fstype，可用 ${avail}G"
+
+        # 镜像本体 8G，加上 boxbuild 的中间产物，留 20G 余量。
+        if [ "$avail" -lt 20 ]; then
+          echo "::error::/tmp 只有 ${avail}G，不够构建（需要 20G 以上）。"
+          echo "/tmp 是 tmpfs 时会被内存大小限制。解决办法：在 workflow 里"
+          echo "把 /tmp 挂回根盘，或者设 TMPDIR 指向别处。"
+          exit 1
+        fi
 
     # boxbuild 需要 kiwi 和 boxed 插件。Fedora 的包名是
     # kiwi-boxed-plugin（kiwi-boxbuild 那个命令只有 openSUSE 有）。
-    - name: 准备 Fedora 环境
+    # 两个架构走同一条路：直接在 runner 上跑 kiwi-ng system build。
+    #
+    # 为什么不再套 VM（之前的 boxbuild 路径）：
+    #
+    #   1. arm64 runner 没有 /dev/kvm，起不了 QEMU 虚拟机
+    #   2. x86_64 虽然能起，但套 VM 只是为了拿到有 udev 的环境 ——
+    #      runner 本身就是完整 Linux，systemd-udevd 在跑、/dev/loopN 齐全
+    #   3. 少一层 VM = 省掉启动时间和 ~2 分钟的 qcow2 下载
+    #
+    # D-006 否掉的是 Docker 容器和手搭 chroot（缺 udev 导致 /dev/loopNpX
+    # 不创建），runner 上不存在这个问题。
+    # Fedora 45 的 chroot。kiwi 跑在里面，宿主是 Ubuntu runner。
+    #
+    # 为什么用 Fedora chroot 而不是直接在 runner 上跑：
+    #   kiwi 需要 Fedora 的 rpm 宏（%{_presetdir} 等）、dnf、以及一堆
+    #   Fedora 特有的包。Ubuntu 上这些都没有，硬补等于手工复刻 Fedora 的
+    #   rpm 工具链，是 D-006 记过的坑。
+    #
+    # 为什么不套 boxbuild 的 VM：
+    #   1. arm64 runner 没有 /dev/kvm，QEMU 起不来
+    #   2. chroot 里 bind 了宿主的 /dev、udev 在 runner 上跑着，
+    #      /dev/loopNpX 能正常创建 —— D-006 的失败是「没 bind + 没 udev」
+    #
+    # kiwi 维护者 Conan-Kudo 在 mock#1554 的说法：
+    #   every other image type requires using the simple isolation/chroot mode
+    - name: 准备 Fedora chroot
       shell: bash
       run: |
         set -e
         sudo mkdir -p /mnt/fedora
 
-        # 只借用 podman 取 rootfs，构建本身在 boxbuild 的 VM 里跑
+        # 只借用 podman 取 rootfs
+        # runner 本身就是目标架构（x86_64 runner 构建 x86_64，arm64 构建
+        # aarch64），不需要 --platform 交叉拉取。
         CID=$(sudo podman create fedora:45)
         sudo podman export "$CID" | sudo tar -x -C /mnt/fedora
         sudo podman rm "$CID"
 
-        # boxbuild 需要：KVM 设备、loop 设备、网络、udev 运行目录
+        # bind 宿主的关键目录：
+        #   dev   让 chroot 能用宿主 udev 创建出来的 /dev/loopNpX
+        #   proc/sys/run  系统信息与运行时
         for p in dev proc sys run; do
           sudo mkdir -p "/mnt/fedora/$p"
           sudo mount --bind "/$p" "/mnt/fedora/$p"
         done
         sudo cp /etc/resolv.conf /mnt/fedora/etc/resolv.conf
 
-        # 仓库挂进 chroot 的 /work（脚本和描述文件都在那里）
+        # 仓库挂进 chroot 的 /work
         sudo mkdir -p /mnt/fedora/work
         sudo mount --bind "$PWD" /mnt/fedora/work
 
-    - name: 安装构建工具
+    - name: 安装 kiwi
       shell: bash
       run: |
         sudo chroot /mnt/fedora /bin/bash -c '
+          set -e
           dnf install -y -q \
-            kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild \
-            distribution-gpg-keys createrepo_c rpm-build
+            kiwi-cli kiwi-systemdeps-filesystems kiwi-systemdeps-bootloaders \
+            distribution-gpg-keys createrepo_c rpm-build python3-zstandard
           echo "kiwi: $(kiwi-ng --version 2>&1 | tail -1)"
-          echo "=== 可用 box ==="
-          kiwi-ng system boxbuild --list-boxes 2>&1 | grep -E "^\s+name:" | head
         '
 
     - name: 构建镜像
@@ -84,14 +143,16 @@ runs:
         PROFILE: ${{ inputs.profile }}
         LOCK_OUT: ${{ inputs.lock-out }}
         LOCK_FILE: ${{ inputs.lock-file }}
+        TARGET_ARCH: ${{ inputs.arch }}
       run: |
         set -o pipefail
         if [ -n "$ROOT_PASSWORD" ]; then
           echo "::warning::本次构建启用了 root 密码登录，产物不可对外发布"
         fi
 
-        # 组装 build.sh 的参数
-        args=()
+        # --build-only：只构建，不跑 install_deps。
+        # 依赖已经在上一步用 dnf 装好了，重复装浪费时间。
+        args=(--build-only)
         [ "$LOCK_OUT" = "1" ] && args+=(--lock-out)
         if [ -n "$LOCK_FILE" ]; then
           # 锁文件由调用方放到仓库根的 .lock/ 下，chroot 里看到的是 /work/.lock/
@@ -100,10 +161,11 @@ runs:
           head -5 "/work/$LOCK_FILE"
         fi
 
-        # 用 sudo env 把变量塞进 chroot 的环境，而不是拼进 bash -c 的字符串：
+        # 用 sudo env 把变量塞进 chroot 的环境，不拼 bash -c 字符串：
         # 密码里带引号、$ 或空格时不会把命令拆坏。
         # chroot 里的变量用位置参数传，避免二次展开。
         sudo env ROOT_PASSWORD="$ROOT_PASSWORD" PROFILE="$PROFILE" \
+          TARGET_ARCH="$TARGET_ARCH" \
           chroot /mnt/fedora /bin/bash -c '
             set -e
             cd /work
@@ -118,6 +180,9 @@ runs:
         # upload-artifact 以 runner 用户跑，读不了会报 EACCES。
         sudo chmod -R a+rX out/ 2>/dev/null || true
         ls -lh out/ 2>/dev/null || echo "(空)"
+
+        # 卸载 chroot 的 bind mount，不然 runner 清理时会报 device busy
+        sudo losetup -D 2>/dev/null || true
         sudo umount /mnt/fedora/work 2>/dev/null || true
         for m in dev proc sys run; do
           sudo umount -R "/mnt/fedora/$m" 2>/dev/null || true

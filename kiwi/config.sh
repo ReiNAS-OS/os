@@ -196,80 +196,78 @@ firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || t
 #  9. 登录前提示（管理面板地址）
 # ============================================================
 install -d /usr/lib/reinas
-cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'
-#!/bin/bash
-# 生成登录前提示到 /etc/issue.d/，agetty 每次打印都会重读。
+# 登录提示的静态内容直接写死在 /etc/issue.d/10-reinas.issue 里，脚本只负责
+# 把占位符换成当前 IP。这样不用跑脚本就能看到最终长相。
 #
-# 内容：ASCII 字标 + 版本/内核 + Web console + Project，共 9 行。
-#
-# 两条硬约束（实测过的，别改）：
+# 三条硬约束（实测过的，别改）：
 #   1. 全英文。内核控制台默认字体不含 CJK 字形，中文在物理屏幕/IPMI 上
 #      显示成空白或问号。串口能显示中文不代表这里能用。
 #   2. 只用 ANSI 16 色的 SGR 码。物理 VGA/VBE 控制台只保证 16 色，
 #      256 色（38;5;n）和真彩色（38;2;r;g;b）会被忽略或错色。
-#   3. 字画只用 # 和空格。_ 和 | 在多数等宽字体里不和相邻字符连成实线，
-#      看起来是断的；# 是满格字符，任何字体下都成块。
+#   3. 字标只用 # 和空格。_ 和 | 在多数等宽字体里不占满格，连起来有缝，
+#      看起来是描边而不是实心。
+#
+# issue 转义（agetty 展开，不是 shell）：
+#   \S  PRETTY_NAME，即 "ReiNAS 0.1.0"     \r  内核版本
+#   \m  架构                               \l  终端名
+install -d /etc/issue.d
+
+# 生成提示文件。
+#
+# ⚠️ 两层转义必须分清，这是最容易踩的地方：
+#
+#   1. ANSI 颜色要**真实的 ESC 字节**（0x1B），用 printf 的 \033 产出。
+#      agetty 不解析 "\033" 这四个字符，直接写进文件会原样显示成乱码。
+#   2. agetty 的 issue 转义（\S \r \m \l）必须是**字面的反斜杠加字母**，
+#      所以要用 %s 拼一个 BS 变量进去，不能让 printf 把 \r 解释成回车。
+#
+# 文件名带 .issue 后缀才会被 issue.d 目录扫描到。
+BS='\'
+{
+  echo
+  printf '\033[1;36m%s\033[0m\n' '####  ##### ### #   #  ###   ####'
+  printf '\033[1;36m%s\033[0m\n' '#   # #      #  ##  # #   # #'
+  printf '\033[1;36m%s\033[0m\n' '####  ####   #  # # # #####  ###'
+  printf '\033[1;36m%s\033[0m\n' '#  #  ##### ### #   # #   # ####'
+  echo
+  printf '\033[1m%s  \033[2m%s on %s\033[0m\n' "${BS}S" "${BS}r" "${BS}m"
+  echo
+  printf '\033[1mWeb console:\033[0m  \033[1;36m@REINAS_URL@\033[0m\n'
+  printf '\033[1mProject:\033[0m      \033[1;36mhttps://github.com/ReiNAS-OS\033[0m\n'
+  echo
+} > /etc/issue.d/10-reinas.issue
+chmod 0644 /etc/issue.d/10-reinas.issue
+
+# 上面文件里的 @REINAS_URL@ 在开机和网络变化时被替换成真实地址。
+# 没拿到 IP 时显示 waiting，不显示一个连不上的地址。
+cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'
+#!/bin/bash
+# 把 /etc/issue.d/10-reinas.issue 里的 @REINAS_URL@ 换成当前访问地址。
+#
+# 只在 IP 变化时重写文件（避免无谓的磁盘写）。agetty 每次打印登录提示都会
+# 重读这个文件，所以改完立刻生效。
 set -u
 OUT=/etc/issue.d/10-reinas.issue
-mkdir -p /etc/issue.d
+[ -f "$OUT" ] || exit 0
 
 # 排除 docker/veth/桥接/虚拟网卡，取第一个真实 IPv4
 ip=$(ip -4 -o addr show scope global 2>/dev/null \
      | awk '$2 !~ /^(docker|veth|br-|virbr|tun|wg)/ {print $4; exit}' \
      | cut -d/ -f1)
 
-# 提示的唯一来源是下面的 /etc/issue.d/10-reinas.issue。
-#
-# /etc/issue 是 reinas-release 包提供的软链（→ /usr/lib/issue），内容在
-# packages/reinas-release/files/issue 里维护，那里是空的。两处都放内容会让
-# 发行版名和内核版本各打印两遍 —— agetty 的规则是「/etc/issue + issue.d/*」
-# 拼接，不是覆盖。
+if [ -n "${ip:-}" ]; then
+    url="https://${ip}:5090"
+else
+    url="waiting for network..."
+fi
 
-{
-  echo
-  # \S = 发行版名，\r = 内核版本，\m = 架构。这些是 agetty 的 issue 转义，
-  # 不是 shell 的，必须原样落进文件。而 echo -e / printf 都会自己解析反斜杠
-  # （\r 直接变回车把整行冲掉），所以用 BS 变量存字面反斜杠再拼进去。
-  BS='\'
-
-  # ASCII 字标。4 行高、33 列宽，用 # 填充。
-  #
-  # 为什么是 #：_ 和 | 在等宽字体里不占满格，连起来有缝，看着像描边而不是
-  # 实心字。物理控制台上尤其明显。注意别为了"好看"换回线条字符。
-  printf '\033[1;36m%s\033[0m\n' \
-    '####  ##### ### #   #  ###   ####' \
-    '#   # #      #  ##  # #   # #' \
-    '####  ####   #  # # # #####  ###' \
-    '#  #  ##### ### #   # #   # ####'
-  echo
-
-  # 版本 + 内核。下面那行靠 agetty 的 issue 转义：
-  #   \S  os-release 的 PRETTY_NAME，本来就是 "ReiNAS 0.1.0"，不要重复写
-  #   \r  内核版本   \m  架构
-  # 必须原样落进文件，不能让 echo/printf 解析掉，所以用 BS 存字面反斜杠。
-  #
-  # 用 \033 直接拼，不用 $(printf) 嵌套：嵌套会让格式串和参数对不上。
-  #
-  # \S 展开成 os-release 的 PRETTY_NAME，本来就是 "ReiNAS 0.1.0"，
-  # 前面不要再写 "ReiNAS"，否则变成 "ReiNASReiNAS 0.1.0"。
-  printf '\033[1m%s  \033[2m%s on %s\033[0m\n' \
-    "${BS}S" "${BS}r" "${BS}m"
-  echo
-
-  # 下面两行统一格式：标签粗体 + 冒号，值用同一列起。
-  # 标签宽度固定 13 字符（"Web console:" 就是 12 字符 + 1 空格），
-  # 这样两个 URL 的左边界对齐。
-  if [ -n "${ip:-}" ]; then
-    printf '\033[1mWeb console:\033[0m  \033[1;36mhttps://%s:5090\033[0m\n' "$ip"
-  else
-    printf '\033[1mWeb console:\033[0m  \033[2mwaiting for network...\033[0m\n'
-  fi
-  # "Web console:" 12 字符 + 2 空格 = 值从第 15 列起
-  # "Project:" 8 字符 + 6 空格 = 同一列
-  printf '\033[1mProject:\033[0m      \033[1;36mhttps://github.com/ReiNAS-OS\033[0m\n'
-  echo
-} > "$OUT"
-chmod 0644 "$OUT"
+# 幂等：内容没变就不写，避免每次 DHCP 续租都动磁盘
+tmp=$(mktemp)
+sed "s|@REINAS_URL@|${url}|" "$OUT" > "$tmp"
+if ! cmp -s "$tmp" "$OUT"; then
+    cat "$tmp" > "$OUT"
+fi
+rm -f "$tmp"
 ISSUEEOF
 chmod 0755 /usr/lib/reinas/reinas-issue-update
 
