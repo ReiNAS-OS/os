@@ -103,7 +103,7 @@ cp /usr/share/OVMF/OVMF_VARS.fd /tmp/OVMF_VARS.fd
 | root 密码状态 | `passwd -S root` | 开密码构建 `P`；生产构建 `L` |
 | reinas 始终锁定 | `passwd -S reinas` | 恒为 `L` |
 | 构建标记 | `ls /etc/reinas/BUILD-HAS-ROOT-PASSWORD` | 开密码构建存在；生产构建不存在 |
-| 登录提示 | 看 console | 显示 `Web panel:
+| 登录提示 | 看 console | 显示 `Web console:
  https://<ip>:5090`（面板未实现时访问会失败，正常） |
 | **Secure Boot** | `mokutil --sb-state` 或 `dmesg \| grep -i secure` | `SecureBoot enabled` |
 | dnf 可用 | `dnf repolist` | 能看到 `fedora` / `updates`，且 `$releasever` = 45 |

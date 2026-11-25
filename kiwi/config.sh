@@ -200,7 +200,7 @@ cat > /usr/lib/reinas/reinas-issue-update <<'ISSUEEOF'
 #!/bin/bash
 # 生成登录前提示到 /etc/issue.d/，agetty 每次打印都会重读。
 #
-# 就四行信息：身份 + 内核、Web panel、Project。不放大横幅 —— 这一屏每次
+# 就四行信息：身份 + 内核、Web console、Project。不放大横幅 —— 这一屏每次
 # 登录/唤醒都会打一遍，占满整屏只会挡住要看的东西。
 #
 # 两条硬约束（实测过的，别改）：
@@ -227,9 +227,9 @@ ip=$(ip -4 -o addr show scope global 2>/dev/null \
     "ReiNAS${BS}S" "${BS}r on ${BS}m"
   echo
   if [ -n "${ip:-}" ]; then
-    printf '\033[1mWeb panel:\033[0m    \033[1;36mhttps://%s:5090\033[0m\n' "$ip"
+    printf '\033[1mWeb console:\033[0m  \033[1;36mhttps://%s:5090\033[0m\n' "$ip"
   else
-    printf '\033[1mWeb panel:\033[0m    \033[2mwaiting for network...\033[0m\n'
+    printf '\033[1mWeb console:\033[0m  \033[2mwaiting for network...\033[0m\n'
   fi
   printf '\033[2mProject:\033[0m            https://github.com/ReiNAS-OS\n'
   echo
