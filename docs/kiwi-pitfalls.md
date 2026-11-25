@@ -55,9 +55,8 @@ glibc → ...）。当前配置走官方单包写法，这个问题由 rpm 的�
 
 ## 本地 rpm 仓库必须在 `kiwi/rpms/`
 
-boxbuild 只共享 `--description` 和 `--target-dir` 两个目录，仓库放别处构建箱看不到。
-描述文件里用 `this://./rpms` 引用，且必须 `createrepo_c` 生成元数据——只有 rpm
-文件会报：
+kiwi 只把 `--description` 指向的目录当仓库源，rpm 放别处看不到。描述文件里用
+`this://./rpms` 引用，且必须 `createrepo_c` 生成元数据——只有 rpm 文件会报：
 
 ```
 Failed to download metadata (baseurl: "file:///description/rpms/")

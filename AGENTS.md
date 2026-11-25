@@ -14,8 +14,11 @@ sudo ./scripts/build.sh --rpm-only        # 只编译 reinas-release
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
 ```
 
-构建需要完整 Linux 宿主（KVM + loop + udev）。**macOS 和 Docker 容器都不行**，
-原因见 `docs/decisions.md` D-006。CI 用 GitHub Actions 的 `ubuntu-latest`。
+构建跑在 **Fedora 45 的 chroot** 里（不套 VM，不需要 KVM）。宿主只要有 loop
+设备和在跑的 udev 就行。**macOS 和 Docker 容器不行**，原因见 D-006。
+
+CI 用 GitHub Actions：x86_64 走 `ubuntu-26.04`，aarch64 走 `ubuntu-26.04-arm`，
+两者都在 Fedora chroot 里构建。
 
 **root 密码默认关闭**（D-007）。不开开关构建出来的镜像没有任何口令、SSH 只认
 公钥、镜像里也没预置公钥 —— 装完进不去。开发阶段必须加 `--root-password`。
@@ -50,7 +53,7 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 ## 这个项目特有的坑
 
-完整清单在 `docs/kiwi-pitfalls.md`。最容易踩的四条：
+完整清单在 `docs/kiwi-pitfalls.md`。最容易踩的五条：
 
 1. **kiwi 描述文件的错误要跑到很晚才暴露。** 注释里的连续减号、`<locale>` 带
    `.UTF-8` 后缀、`<packages>` 上写 `arch`、包名拼错——都用 `check-xml.py`
@@ -61,6 +64,9 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
    整段忘掉，缺了它 ISO 的 UEFI 引导是空的。
 4. **内核和 grub 必须用 Fedora 已签名原件。** `shim-x64` / `grub2-efi-x64` /
    `kernel` 一旦替换成自编译版本，Secure Boot 链就断。详见 D-003。
+5. **构建必须在 Fedora 环境里，不能是 Ubuntu。** rpm 宏（`%{_presetdir}` 等）、
+   dnf、包名全是 Fedora 的。CI 跑在 Fedora 45 的 chroot 里，不是 runner 本身。
+   详见 D-006。
 
 ## CI 命名约定
 

@@ -183,21 +183,24 @@ Microsoft CA（固件 db 里）
 
 ---
 
-## D-006：必须在完整 Linux 环境构建，不能用容器
+## D-006：在 Fedora chroot 里构建，不套 VM
 
 **日期**：2026-11-24
 **状态**：已决定
 
 ### 结论
 
-用 `kiwi-ng system boxbuild --box fedora`。它起一台虚拟机（完整 `/dev` + udev）在内跑 `kiwi-ng system build`。
+**在 Fedora chroot 里跑 `kiwi-ng system build`。不套 VM。**
 
-不允许的两条路，以及各自为什么失败：
+```
+runner (Ubuntu) → Fedora 45 chroot → kiwi-ng system build
+```
 
 | 方式 | 结果 |
 |---|---|
 | Docker 容器直接构建 | ❌ 缺 udev，`/dev/loopNpX` 不创建 |
-| 手搭 chroot + bind 宿主 `/dev` | ❌ loop 通了，但接着撞 grub/dracut 一串问题 |
+| **Fedora chroot + bind 宿主 `/dev`** | ✅ **当前方案** |
+| boxbuild（chroot 里再套 VM） | ⚠️ 能用但多余，见下 |
 
 ### 容器为什么不行
 
@@ -209,39 +212,64 @@ EXEC: [partx --add /dev/loop0]
 ERROR: KiwiMappedDeviceError: Device /dev/loop0p1 does not exist
 ```
 
-根因：Docker 容器没有 udev。内核识别出 loop 分区（`sysfs` 里有 `loop0p1`），但没有程序去创建 `/dev/loop0p1` 设备节点。手动 `mknod` 立即可用；启动 `systemd-udevd` + `udevadm trigger` 也无效。
+根因：Docker 容器**没有 udev 在跑**。内核识别出 loop 分区（`sysfs` 里有
+`loop0p1`），但没有程序去创建 `/dev/loop0p1` 设备节点。手动 `mknod` 立即可用；
+启动 `systemd-udevd` + `udevadm trigger` 也无效。
 
-**这不是 kiwi 的 bug**：用 Fedora 官方 kiwi-descriptions 的 f45 分支、零修改零补丁，失败在完全相同的位置。
+**这不是 kiwi 的 bug**：用 Fedora 官方 kiwi-descriptions 的 f45 分支、零修改
+零补丁，失败在完全相同的位置。
 
-### 手搭 chroot 为什么也不行
+### chroot 为什么可以
 
-bind 宿主 `/dev` 进 chroot 后 loop 节点确实能创建（`brw-rw---- root disk 259,5 /dev/loop0p1`），但接着要逐个补偿：
-
-- `KiwiBootLoaderGrubDataError: grub path i386-pc not found` → 补 `grub2-pc` / `grub2-efi-ia32` 全套
-- `dracut[E]: No '/dev/log' or 'logger' included` → 补常驻 socket 或 `util-linux-core`
-
-这些在 boxbuild 的完整 VM 里都不存在。手搭等于把 kiwi 已经封装好的环境维护责任揽过来。
-
-### 关键事实：包名不同于 openSUSE
-
-| 名称 | 归属 | Fedora 有吗 |
-|---|---|---|
-| `kiwi-boxbuild` 命令 | openSUSE OBS | ❌ |
-| `kiwi-boxed-plugin` → `kiwi-ng system boxbuild` | Fedora 官方 | ✅ |
+关键区别：**bind 了宿主 `/dev`，而宿主的 udev 在跑。**
 
 ```bash
-dnf install kiwi-cli kiwi-boxed-plugin kiwi-systemdeps-boxbuild
-kiwi-ng --type oem --profile Disk system boxbuild --box fedora kiwi \
-  --description ./kiwi --target-dir ./out
+for p in dev proc sys run; do
+  mount --bind "/$p" "/mnt/fedora/$p"
+done
 ```
 
-### boxbuild 的共享限制
+内核在宿主上识别出 loop 分区，宿主的 udev 创建 `/dev/loopNpX`，chroot 里
+因为共享 `/dev` 直接就能看到。
 
-box 只共享 `--description` 和 `--target-dir` 两个目录。因此：
+### 为什么不套 boxbuild 的 VM
 
-- 本地 rpm 仓库必须放在 description 目录**内部**（`kiwi/rpms/`），用 `this://./rpms` 引用
-- 放在仓库根目录构建箱看不到
-- 不能用 `127.0.0.1:8888` 的 HTTP 服务——VM 有独立网络命名空间
+boxbuild 起一台 QEMU 虚拟机，在 VM 里跑同样的 `kiwi-ng system build`。它的
+唯一作用是提供「有 udev 的完整环境」——而 chroot 已经提供了。
+
+不用的三个理由：
+
+1. **arm64 runner 没有 `/dev/kvm`**：
+   ```
+   qemu-system-aarch64: -accel accel=kvm: Could not access KVM kernel module
+   ```
+   x86_64 的 runner 有，arm64 的没有。这是 GitHub 的硬限制。
+2. **多一层 VM 慢一倍**：boxbuild 约 15 分钟，chroot 直接跑 6-9 分钟。
+3. **box 只有 openSUSE 系可选**：fedora box 仅 x86_64，aarch64 得用
+   universal（openSUSE 的通用环境）。虽然不进产物，但多一层不必要的依赖。
+
+### 曾经的错误尝试：在 Ubuntu 上 native 构建
+
+看到 arm64 没有 KVM 后，试过跳过 chroot 直接在 runner 上跑。连撞三次墙：
+
+1. `error: Failed build dependencies: systemd-rpm-macros` —— Ubuntu 没这包
+2. `error: File must begin with "/": %{_presetdir}/90-default.preset` ——
+   Fedora 的 rpm 宏 Ubuntu 没有
+3. 修一个冒一个，没有尽头
+
+**这是把手搭环境的维护责任揽过来，和下面那条教训是同一个错误。**
+
+rpm 宏、dnf、包名、路径约定，全都是 Fedora 的。要么用 Fedora 环境
+（chroot），要么别做。
+
+### 附带教训：那 5 处 kiwi 补丁是无效的
+
+过程中给 kiwi 打过 5 处源码补丁（裁 plugin 参数、去 `--config`、加
+`--use-host-config`、禁 rpmdb 重定向、强制 `use_default_location`）。事后验证：
+官方描述不加任何补丁也能推进到同一位置。补丁只让构建多跑十分钟，没解决任何
+问题。
+
+**遇到 kiwi 行为异常，先对照 Fedora 官方描述文件，而不是改 kiwi 源码。**
 
 ### 附带教训：那 5 处 kiwi 补丁是无效的
 

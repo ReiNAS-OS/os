@@ -13,7 +13,9 @@
 
 ## 快速开始
 
-构建走 kiwi 官方的 **boxbuild** 路径：在一个自带完整 `/dev` 和 udev 的虚拟机里构建。
+构建在 **Fedora chroot** 里跑 `kiwi-ng system build`，不套虚拟机。宿主（CI 是
+Ubuntu runner，本地是 Fedora）只要有 udev 在跑、`/dev/loopN` 齐全就行。
+细节见 `docs/decisions.md` D-006。
 
 ```bash
 sudo ./scripts/build.sh                # 完整构建（生产形态：无任何已知口令）
@@ -211,9 +213,9 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 | 项 | 数值 |
 |---|---|
 | 磁盘 | 15 GB |
-| 内存 | 8 GB（boxbuild 默认） |
+| 内存 | 16 GB（runner 默认） |
 | CPU | 4 核 |
-| 时间 | 约 15 分钟（CI 实测 14m57s） |
+| 时间 | 约 6-9 分钟（CI 实测，两个架构并行各 6-9 分钟） |
 | 费用 | 0 |
 
 产物（CI 实测）：
