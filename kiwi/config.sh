@@ -265,7 +265,23 @@ install -d /usr/lib/reinas
 # ⚠️ 那个文件里的 ANSI 颜色必须是**真实的 ESC 字节**（0x1B），不是字面的
 #    四个字符 "\033" —— agetty 不解析后者，会原样显示成乱码。用编辑器改
 #    配色时注意这一点；生成好的文件用 cat -v 能看到 ^[[ 才是对的。
+#
+# ⚠️ issue 文件**没有注释语法**。agetty 只解释 \ 开头的转义，其余逐字节输出，
+#    写一行 "# 说明" 会原样显示在登录界面上（实测过）。所以任何说明只能写在
+#    这里，不能写进 issue 文件。
 install -d /etc/issue.d
+
+# 清空 Fedora 自带的 /etc/issue。内容是：
+#     \S
+#     Kernel \r on an \m (\l)
+# 展开后是 "ReiNAS 0.1.0" + "Kernel 7.3.4-... on aarch64 (tty1)"。
+# agetty 会读 /etc/issue **和** /etc/issue.d/*.issue 两部分，不清的话登录界面
+# 往上多出那两行，和字标下面的版本行重复。
+#
+# 为什么不用「放一个空文件」的办法：那样依赖某个包恰好提供空文件，包一变就
+# 失效（这个坑真踩过 —— 删掉自建的空 issue 后，Fedora 的原版就露出来了）。
+# 显式清空则与包无关，意图也写在代码里。
+: > /etc/issue
 
 ISSUE_DROPIN=/etc/issue.d/10-reinas.issue
 if [ ! -f "$ISSUE_DROPIN" ]; then

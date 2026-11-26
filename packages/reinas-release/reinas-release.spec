@@ -4,8 +4,11 @@
 # 依赖解析、第三方工具继续正常工作的元数据。
 #
 # 设计原则：**改身份，不改兼容性。**
-#   外观（os-release / CPE / issue）        → ReiNAS
+#   外观（os-release / CPE）                → ReiNAS
 #   机制（dist 宏 / preset / releasever）   → 原样保留
+#
+# 登录提示（/etc/issue.d/10-reinas.issue）不归本包管：它由 kiwi/root/ overlay
+# 提供，config.sh 负责清空 Fedora 自带的 /etc/issue。
 #
 # 升级到 Fedora 46 时需要改的只有三处（都在本文件或同级 files/ 里）：
 #   1. 下面的 fedora_release 宏定义
