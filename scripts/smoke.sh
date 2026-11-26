@@ -53,9 +53,11 @@ chk "podman移除"  "rpm -q podman 2>&1"                 'not installed'
 echo "--- 仓库 ---"
 chk "dnf仓库"     "dnf repolist 2>/dev/null | grep -c 'fedora'"  '[1-9]'
 echo "--- 登录体验 ---"
-# 登录提示词只留 login:，不带主机名前缀（字标里已经有 ReiNAS）。
+# 提示词由 /usr/local/sbin/reinas-login 自己打 "Login: "（agetty 的是编译进
+# 二进制的 "login: "，改不了大小写，所以用 --skip-login 接管）。
 # drop-in 在模板上，tty1 和串口都走它，所以查配置就够，不用真的开终端。
-chk "getty无主机名" "grep -c 'nohostname' /etc/systemd/system/getty@.service.d/10-nohostname.conf 2>&1" '[1-9]'
+chk "getty接管提示" "grep -c 'skip-login' /etc/systemd/system/getty@.service.d/10-prompt.conf 2>&1" '[1-9]'
+chk "Login大写"    "grep -c 'Login:' /usr/local/sbin/reinas-login 2>&1" '[1-9]'
 chk "字标就位"     "test -f /etc/issue.d/10-reinas.issue && echo ok"  'ok'
 echo
 if [ "$fail" = 0 ]; then echo "✅ 全部通过"; else echo "❌ 有失败项"; exit 1; fi

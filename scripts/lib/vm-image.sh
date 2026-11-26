@@ -219,7 +219,7 @@ boot() {
     ARGS+=(-drive "file=$dir/disk.qcow2,format=qcow2,if=virtio")
 
     log "启动（串口控制台即显示器）。退出：Ctrl-A 然后 X"
-    log "登录：控制台提示 login: 输 root / 123456（要 --root-password 构建的镜像）"
+    log "登录：控制台提示 Login: 输 root / 123456（要 --root-password 构建的镜像）"
     [ "$PANEL_PORT" != 0 ] && log "面板：宿主机 http://127.0.0.1:${PANEL_PORT}"
 
     exec "$bin" "${ARGS[@]}" -nographic

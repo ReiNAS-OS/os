@@ -193,25 +193,39 @@ firewall-offline-cmd --zone=public --add-service=mountd     >/dev/null 2>&1 || t
 firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || true
 
 # ============================================================
-#  8.5 登录提示词不显示主机名
+#  8.5 登录提示词：自己打 Login:
 # ============================================================
-# 默认 agetty 打的是「<hostname> login:」，即 ReiNAS login:。字标里已经有
-# 大大的 ReiNAS，这一行再重复一遍是噪音，所以关掉主机名前缀，只留 login:。
+# agetty 的提示串是**编译进二进制的字面量** "login: "，没有配置项能改成
+# 大写（--nohostname 只是去掉主机名，字母仍是小写）。但 login 程序提示的是
+# "Password:"，两个大小写不一致，看着别扭。
 #
-# 用模板 drop-in（getty@.service.d/）而不是具体实例：tty1 的 getty@tty1.service
-# 和串口的 serial-getty@ttyAMA0.service 都从模板派生，一处覆盖两边都生效。
-# 只改 serial-getty 的话，物理屏幕/VGA 上仍然是旧的「ReiNAS login:」。
+# 所以用 --skip-login（-n）让 agetty 完全不打印提示，交给下面这个包装脚本：
+# 它自己打 "Login: "、读用户名、再 exec 真正的 login。这样两个提示都是大写。
 #
-# ⚠️ 必须先用空的 ExecStart= 清掉模板里的原值，再写新值 —— systemd 对
-#    ExecStart 是「清空后才接受新值」，不写那行空赋值会直接报错启动失败。
-#    `%I` 是实例名（tty1 / ttyAMA0），不能写死。
+# ⚠️ 三个关键点，缺一个就不工作：
+#   1. 必须 -n/--skip-login。不加的话 agetty 会先打它自己的 "login: "，
+#      再调 -l 脚本，屏幕上就是两行提示叠着（实测过）。
+#   2. 必须 -l 指向包装脚本，用户名由脚本 read 进来再传给 login。
+#   3. drop-in 放在 getty@.service.d/ 模板上，不要放具体实例目录 ——
+#      tty1（VGA）和 serial-getty@ttyXXX 都从模板派生，一处覆盖两边。
+#      只改串口时物理屏幕还是旧的（这个坑实测踩过）。
+cat > /usr/local/sbin/reinas-login <<'LOGINEOF'
+#!/bin/bash
+# getty 的登录提示包装。agetty 用 -n 跳过了自己的提示，这里全权负责。
+# 只做两件事：打 "Login: "、读用户名。之后 exec 真 login，它会打 "Password:"。
+printf 'Login: '
+IFS= read -r user
+exec /usr/bin/login "$user"
+LOGINEOF
+chmod 0755 /usr/local/sbin/reinas-login
+
 mkdir -p /etc/systemd/system/getty@.service.d
-cat > /etc/systemd/system/getty@.service.d/10-nohostname.conf <<'EOF'
+cat > /etc/systemd/system/getty@.service.d/10-prompt.conf <<'EOF'
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --nohostname --noclear %I $TERM
+ExecStart=-/sbin/agetty --skip-login -l /usr/local/sbin/reinas-login %I $TERM
 EOF
-chmod 0644 /etc/systemd/system/getty@.service.d/10-nohostname.conf
+chmod 0644 /etc/systemd/system/getty@.service.d/10-prompt.conf
 
 # ============================================================
 #  9. 登录前提示（管理面板地址）
