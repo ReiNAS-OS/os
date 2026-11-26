@@ -213,22 +213,26 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 ## 升级到下一个 Fedora
 
-每年一次，**改六处**：
+每年一次，**改五处**：
 
 | # | 文件 | 改什么 |
 |---|---|---|
 | 1 | `kiwi/reinas.kiwi` | `<release-version>46</release-version>` |
 | 2 | `packages/reinas-release/reinas-release.spec` | `%global fedora_release 46` |
-| 3 | `packages/reinas-release/files/os-release` | `VERSION_ID` / `PLATFORM_ID` / `CPE_NAME` |
+| 3 | `packages/reinas-release/files/os-release` | `PLATFORM_ID`（`platform:f46`）和 `CPE_NAME`（末段 `:46`） |
 | 4 | `packages/reinas-release/files/releasever` | `46` |
 | 5 | `packages/reinas-release/files/system-release-cpe` | 末段 `:46` |
-| 6 | `scripts/check-xml.py` | `FEDORA_RELEASE = "46"` |
+
+`os-release` 里的 `VERSION` 和 `VERSION_ID` 是**发行版版本**（`0.1.0`），
+不跟 Fedora 主版本走，升级 Fedora 时别动它们。
+
+`scripts/check-xml.py` 不用改：它的 `FEDORA_RELEASE` 从 `files/releasever`
+读出来，改完上面第 4 处它自动跟上。
 
 然后 `./scripts/build.sh --clean`。
 
-**漏了第 5、6 处的后果**：`system-release-cpe` 不跟着改，CPE 会指回旧版本；
-`check-xml.py` 的常量不改，`--online` 会拿旧版本的仓库元数据校验包名，
-新版本里新增的包会被误判为不存在。
+**漏了第 3、5 处的后果**：`system-release-cpe` 和 `os-release` 的 `CPE_NAME`
+不跟着改，CPE 会指回旧版本。
 
 **不能直接 `dnf system-upgrade`**：因为你的 release 包叫 `reinas-release`，它 `Obsoletes: fedora-release`，Fedora 的升级路径不认这个。跨版本升级需要自己写迁移脚本（`dnf distro-sync` + 换 release 包），这在 0.3 之前不做。
 

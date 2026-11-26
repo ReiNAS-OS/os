@@ -69,16 +69,24 @@ Failed to download metadata (baseurl: "file:///description/rpms/")
 ## `root/` overlay 的实际行为
 
 `kiwi/` 目录下的 `root/` 是 kiwi 的 overlay 树：包装完之后整个目录按路径覆盖进
-镜像。当前**没有任何文件**，曾经有三个空目录（`etc/issue.d`、
-`etc/NetworkManager/dispatcher.d`、`etc/systemd/system`），已删除，因为：
+镜像。曾经三个空目录（`etc/issue.d`、`etc/NetworkManager/dispatcher.d`、
+`etc/systemd/system`）被删过，因为空目录不进 git、clone 下来不存在：
 
-- 空目录不进 git，clone 下来根本不存在
-- 这三个目录的真实来源是包或 `config.sh`：
-  - `/etc/NetworkManager/dispatcher.d` ← `NetworkManager` 包提供
-  - `/etc/systemd/system` ← `systemd` 包提供
-  - `/etc/issue.d` ← `config.sh` 里 `mkdir -p`
+- `/etc/NetworkManager/dispatcher.d` ← `NetworkManager` 包提供
+- `/etc/systemd/system` ← `systemd` 包提供
+- `/etc/issue.d` ← 曾经靠 `config.sh` 里 `mkdir -p`
 
-真要用 overlay 时新建即可，kiwi 会自动识别。
+**现在 `kiwi/root/` 里只有一个文件**：`etc/issue.d/10-reinas.issue`。登录字标
+带 200 多段 ANSI 码（2.9 KB），内联进 `config.sh` 会把它顶到提交钩子的 20 KB
+上限；放进 overlay 后它是普通文本文件，改配色直接编辑、`git diff` 能看清改了
+什么。`config.sh` 只校验它在、设权限，并把 `@REINAS_URL@` 换成当前 IP。
+
+⚠️ 这个文件的 ANSI 颜色必须是**真实 ESC 字节**（0x1B），不是字面的 `\033`。
+用 `cat -v` 看，出现 `^[[` 才是对的；写成字面 `\033` 会原样显示成乱码。
+
+真要用 overlay 时新建即可，kiwi 会自动识别。注意 `kiwi/` 根下的 `*.kiwi` 会被
+kiwi glob 排序取第一个当描述文件，所以**别把其它文件放进 `kiwi/` 根目录**，
+要覆盖进镜像就放 `root/` 下。
 
 ---
 
