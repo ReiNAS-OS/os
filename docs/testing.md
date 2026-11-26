@@ -124,11 +124,23 @@ dd if=ReiNAS.x86_64-0.1.0-0.raw of=/tmp/target.img \
  https://<ip>:5090`（面板未实现时访问会失败，正常） |
 | **Secure Boot** | `mokutil --sb-state` 或 `dmesg \| grep -i secure` | `SecureBoot enabled` |
 | dnf 可用 | `dnf repolist` | 能看到 `fedora` / `updates`，且 `$releasever` = 45 |
+| **dnf 能装包** | `dnf install -y tree` | `Complete!`（验证 repo + GPG 密钥都在，见下） |
 | 关键包在 | `rpm -q reinas-release samba nfs-utils btrfs-progs` | 全部已安装 |
 
 **最容易被忽略的三项**：
 
 - **`$releasever` 必须是 45 不是 0.1.0**。跑 `dnf repolist -v | grep -i releasever` 确认。如果是 0.1.0，说明 `Provides: system-release(releasever)` 没生效，所有 metalink 会 404。
+- **dnf 光有 repo 文件还不够，还得有 GPG 公钥**。两个包成对存在：
+  `fedora-repos`（repo 定义）和 `fedora-gpg-keys`（验签公钥）。只装前者时
+  包能下载、验签失败：
+
+  ```
+  cannot open file: (2) - No such file or directory
+  [/usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-aarch64]
+  ```
+
+  `dnf repolist` 能列出仓库不代表能用，**必须真装一个包**（上面表里那条
+  `dnf install -y tree`）才算验证过。
 - **machine-id 必须是每台机器不同的**。启动之后它必然有值，所以判断标准不是「文件为空」，而是「两次部署值不同」。
   **⚠️ 这里有个未验证的顺序问题**：`config.sh` 第 22-23 行 `rm -f` + `touch /etc/machine-id` 造出空文件，但描述文件的 `<packages type="delete">` 里也列了 `/etc/machine-id`，而 kiwi 的删除阶段在 `config.sh` **之后**执行（构建日志实测：08:04:14 config.sh → 08:04:17 uninstall）。两者谁赢取决于 `<file>` 在 delete 段里是否真的生效。详见 [kiwi-pitfalls.md](kiwi-pitfalls.md) 的「delete 在 config.sh 之后执行」一节。
   启动后 `ls -l /etc/machine-id` 确认：存在且为空 → 删除没生效；不存在 → 删除生效、config.sh 被覆盖。

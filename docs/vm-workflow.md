@@ -82,20 +82,22 @@ printf '%s\r' '此处填命令' | nc -U -w 3 .vm/aarch64/logs/console.sock
   要验证：`lsmod | grep 9p`。
 - **虚机能上网**。QEMU user 网络自带 NAT，`curl https://bun.sh` 通就能装。
 
-### 镜像里 dnf 装不了东西（已知）
+### 装 bun 用 dnf
 
-`/etc/yum.repos.d/` 里只有 `reinas.repo`，而它指向 `repo.reinas.example`
-（未部署，`enabled=0`）。**Fedora 官方 repo 文件根本不在镜像里** ——
-`reinas-release` 只 Obsolete 了 `fedora-release-*`，没接管 `fedora-repos`，
-所以没有 `fedora.repo` / `fedora-updates.repo`。
+镜像里已装 `fedora-repos` + `fedora-gpg-keys`，`dnf` 可以直接用：
 
-后果：`dnf install` 什么都装不上（`No matches found: no repositories are
-enabled`），所以上面装 bun 走的是直接下载 zip + `python3 -c zipfile` 解压，
-没用 `dnf install unzip`。
+```bash
+dnf install -y unzip
+curl -fsSL https://bun.sh/install | bash
+```
 
-这与 `testing.md` 里「dnf 可用 / 能看到 fedora、updates」的验收项矛盾，那个
-结论现在不成立。修法是让 `reinas-release` 也提供 repo 文件或 `Provides:
-fedora-repos`，属于镜像侧的待办。
+bun 官方安装脚本要 `unzip`，镜像默认没有，得先装。
+
+> 历史坑：这两个包曾经都不在镜像里 —— `reinas-release` 只 Obsolete 了
+> `fedora-release-*`，没人接管 `fedora-repos`，导致装好的系统
+> `dnf install` 报 `No matches found: no repositories are enabled`。
+> 已在 `kiwi/reinas.kiwi` 里显式加上这两个包。**只加 `fedora-repos` 不够**，
+> 少了 `fedora-gpg-keys` 会下载成功但验签失败。
 
 ---
 

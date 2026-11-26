@@ -304,6 +304,44 @@
     <package name="reinas-release"/>
 
     <!--
+      Fedora 官方仓库定义（fedora / fedora-updates / -testing / cisco-openh264）。
+
+      ⚠️ 这个包必须显式装，否则装好的系统 dnf 一个可用源都没有。
+         repo 文件由 fedora-repos 提供，不是 fedora-release：reinas-release
+         只接管了 fedora-release 那一族（Provides + Obsoletes），
+         fedora-repos 没有人替它，不装就是空的。
+
+         实测漏装的后果：
+           /etc/yum.repos.d/ 只有 reinas.repo，而它 enabled=0（域名未部署）
+           dnf install 任何包 → "No matches found: no repositories are enabled"
+           reinas-update 的 system 通道也跑不起来
+
+         下面 <repository> 段里的 mirrors.fedoraproject.org 是**构建期**源，
+         不进产物，别指望它代替这个包。
+
+      fedora-repos 不依赖 fedora-release（只依赖 rpmlib 基础项），
+      所以和 reinas-release 的 Obsoletes 不冲突。文件落在
+      /usr/share/dnf5/repos.d/，dnf5 原生优先读那里。
+    -->
+    <package name="fedora-repos"/>
+
+    <!--
+      Fedora 的包签名公钥（306 个文件，含各架构各版本的 RPM-GPG-KEY）。
+
+      ⚠️ 和 fedora-repos 必须成对出现，缺一个 dnf 都用不了：
+         repo 文件里写的是 gpgcheck=1，dnf 下完包要拿公钥验签。
+         只装 repo 不装密钥 → 下载成功、验签失败：
+           cannot open file: (2) - No such file or directory
+           [/usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-aarch64]
+
+         只装密钥不装 repo → 没有源，等于没装。
+
+      它不依赖 fedora-release 族，只要求 filesystem >= 3.18-6，不受
+      reinas-release 的 Obsoletes 影响。
+    -->
+    <package name="fedora-gpg-keys"/>
+
+    <!--
       root 密码配置（D-007）。build.sh 在构建前生成这个文件：
         关闭（默认）→ 空文件，root 保持锁定
         开启         → 一行明文密码，如 "123456"
