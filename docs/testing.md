@@ -30,37 +30,17 @@ cd os/
 ./scripts/vm.sh list          # 看最近的构建
 ./scripts/vm.sh pull          # 拉最新一次成功构建（约 500M raw.xz + 装机 ISO）
 ./scripts/vm.sh boot          # 起虚机，串口控制台就是显示器
+./scripts/vm.sh gui           # 同上，但开 GUI 窗口（看登录界面必须用这个）
 
 # 控制台里
 Login: root
 Password:     123456
 ```
 
-镜像里没装 controller 时也能跑 `scripts/smoke.sh` 之外的检查（身份、SELinux、
-分区、子卷）。要把 `smoke.sh` 或自己的二进制送进虚机，另开一个终端：
-
-```bash
-./scripts/vm.sh serve scripts/smoke.sh
-
-# 虚机里
-curl -O http://10.0.2.2:8000/smoke.sh
-bash smoke.sh
-```
-
-装机（`install`）也走同一条链路，全自动，约 10 分钟：
-
-```bash
-./scripts/vm.sh install      # 40G 空盘 + install.iso → 装好的盘
-BASE_IMAGE=$PWD/.vm/aarch64/install-target.raw ./scripts/vm.sh boot
-```
-
-`boot` 会给目标盘建 overlay，原盘只读，装一次可以反复起。
-
-`10.0.2.2` 是 QEMU user 网络的网关，固定值，不用配。
-
-**为什么不开 SSH**：镜像默认 `PasswordAuthentication no`（D-007），验证阶段的
-目标就是按真机的方式用 —— 插串口等于插显示器。开 SSH 端口会把一个生产镜像里
-不存在的入口带进测试环境。
+`boot` 是串口控制台，`gui` 开 cocoa 窗口 —— **看登录界面必须用 `gui`**，
+串口日志里字标是一堆转义字节，看不出对错。两个模式的差别、抓屏和模拟按键的
+做法、以及从 CI 拉产物替换本地镜像的完整流程，都在
+[vm-workflow.md](vm-workflow.md)。
 
 ### 0.2 构建时打开 root 密码
 
@@ -251,6 +231,58 @@ sshd 配置、服务 enable 状态、btrfs 根与子卷、压缩挂载、关键�
 | Secure Boot 真机启动 | ⏳ | 需 OVMF + 真机双验证 |
 | aarch64 构建 | ✅ | CI 用 `ubuntu-26.04-arm` 原生构建成功，产物可启动。旧记录说「没 aa64 的 shim/grub 包」已过时 |
 | 跨 Fedora 版本升级 | ❌ | 0.3 之前不做，见 decisions.md |
+
+### 登录界面的四个坑
+
+改登录提示（`config.sh` 第 8.5 / 9 节、`kiwi/root/etc/issue.d/`）之前先看这段，
+这四个都是实测踩出来的。
+
+**1. agetty 的提示串是编译进二进制的，改不了大小写**
+
+`login: ` 是 `/sbin/agetty` 里的字面量，没有配置项。`--nohostname` 只去掉
+主机名，字母还是小写。而 `login` 程序提示的是 `Password:`，两个大小写不一致。
+
+解法是 `--skip-login`（`-n`）：让 agetty 完全不打印提示，交给
+`/usr/local/sbin/reinas-login` 自己打 `Login: `、读用户名、再 `exec` 真 login。
+
+⚠️ 不加 `-n` 的话，agetty 会先打自己的 `login: ` 再调 `-l` 脚本，屏幕上两行
+提示叠着。
+
+**2. `getty@.service` 和 `serial-getty@.service` 是两套独立模板，不继承**
+
+drop-in 必须**两个都写**。只给 `getty@` 加时，VGA 上已经是 `Login:`，串口却
+还是 agetty 原版的。`config.sh` 里用 for 循环同时写两个。
+
+查证方法（两个都要查，别只看一个）：
+
+```bash
+systemctl show getty@tty1.service -p ExecStart --value
+systemctl show serial-getty@ttyAMA0.service -p ExecStart --value
+```
+
+**3. Fedora 自带 `/etc/issue`，不清空会多打印一段版本信息**
+
+agetty 读 `/etc/issue` **和** `/etc/issue.d/*.issue` 两部分。Fedora 的
+`/etc/issue` 内容是：
+
+```
+\S
+Kernel \r on an \m (\l)
+```
+
+展开后是 `ReiNAS 0.1.0` + `Kernel 7.3.4-... (tty1)`，和字标下面的版本行重复。
+
+**别用「放一个空文件」的办法** —— 那依赖某个包恰好提供空文件，包一变就失效。
+`config.sh` 里显式 `: > /etc/issue`。
+
+**4. issue 文件没有注释语法**
+
+agetty 只解释 `\` 开头的转义，其余逐字节输出。写一行 `# 说明` 会原样显示在
+登录界面上（实测）。所以配色、排版这些说明只能写在 `config.sh` 里，不能写进
+issue 文件。
+
+顺带：issue 里的 ANSI 颜色必须是**真实 ESC 字节**（0x1B），不是字面的 `\033`
+四个字符。用 `cat -v` 看，出现 `^[[` 才是对的。
 
 ### sshd drop-in 覆盖顺序的坑
 

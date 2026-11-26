@@ -12,6 +12,9 @@ sudo ./scripts/build.sh                   # 完整构建（生产形态，无已
 sudo ./scripts/build.sh --root-password   # 开发构建：root / 123456
 sudo ./scripts/build.sh --rpm-only        # 只编译 reinas-release
 python3 scripts/check-xml.py --online kiwi/reinas.kiwi   # 描述文件校验
+
+./scripts/vm.sh pull                      # 拉 CI 最新镜像到 .vm/
+./scripts/vm.sh gui                       # 起虚机，cocoa 窗口 + 串口日志
 ```
 
 构建跑在 **Fedora 45 的 chroot** 里（不套 VM，不需要 KVM）。宿主只要有 loop
@@ -32,6 +35,7 @@ CI 用 GitHub Actions：x86_64 走 `ubuntu-26.04`，aarch64 走 `ubuntu-26.04-ar
 ```
 kiwi/reinas.kiwi      镜像描述，唯一入口。改包、改分区、改引导都在这里
 kiwi/config.sh        镜像内 chroot 配置：身份、账号、服务、防火墙、SELinux
+kiwi/root/            kiwi overlay 树，按路径覆盖进镜像（登录字标在这）
 packages/             自建 RPM（reinas-release 替代 fedora-release）
 scripts/build.sh      构建入口（--root-password / --lock 开关在这里）
 scripts/check-xml.py  描述文件静态检查
@@ -41,7 +45,8 @@ docs/decisions.md     技术决策记录，改架构前先读
 docs/kiwi-pitfalls.md kiwi 构建的坑：描述文件错误、执行顺序、环境陷阱
 docs/decisions-panel.md 面板相关决策（D-009 起）
 docs/image-size.md    镜像体积构成与压缩参数的实测结论
-docs/testing.md       QEMU 验证流程
+docs/vm-workflow.md   QEMU 怎么开、怎么截图、怎么拉产物替换镜像
+docs/testing.md       产物验证：每项检查证明什么
 ```
 
 ## 提交前先跑
@@ -54,7 +59,7 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 ## 这个项目特有的坑
 
-完整清单在 `docs/kiwi-pitfalls.md`。最容易踩的五条：
+完整清单在 `docs/kiwi-pitfalls.md`。最容易踩的六条：
 
 1. **kiwi 描述文件的错误要跑到很晚才暴露。** 注释里的连续减号、`<locale>` 带
    `.UTF-8` 后缀、`<packages>` 上写 `arch`、包名拼错——都用 `check-xml.py`
@@ -68,6 +73,10 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 5. **构建必须在 Fedora 环境里，不能是 Ubuntu。** rpm 宏（`%{_presetdir}` 等）、
    dnf、包名全是 Fedora 的。CI 跑在 Fedora 45 的 chroot 里，不是 runner 本身。
    详见 D-006。
+6. **登录界面的东西只能在 `gui` 模式下验收。** 串口日志里字标是一堆转义字节，
+   看不出颜色和字体对不对。另外 `getty@` 和 `serial-getty@` 是两套独立模板，
+   drop-in 不互相继承；Fedora 自带的 `/etc/issue` 要显式清空。四个坑见
+   `docs/testing.md` 的「登录界面的四个坑」。
 
 ## CI 命名约定
 

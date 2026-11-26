@@ -197,6 +197,12 @@ base_args() {
         netdev="$netdev,hostfwd=tcp::${PANEL_PORT}-:5090"
     fi
     printf '%s\n' -netdev "$netdev" -device virtio-net-pci,netdev=n0
+
+    # 显示后端**不在**这里输出，由调用方各自决定：
+    #   boot → 末尾追加 -nographic（串口即显示器）
+    #   gui  → 自己加 -display cocoa
+    # 早先这里输出 `-display none` 给 gui 用，结果 QEMU 收到两个 -display，
+    # 虽然取最后一个能跑，但属于隐患，已去掉。
 }
 
 # 读成数组。不用 mapfile —— macOS 自带的 /bin/bash 是 3.2，没有这个内置，
@@ -223,6 +229,54 @@ boot() {
     [ "$PANEL_PORT" != 0 ] && log "面板：宿主机 http://127.0.0.1:${PANEL_PORT}"
 
     exec "$bin" "${ARGS[@]}" -nographic
+}
+
+# 带窗口启动（macOS 的 cocoa）。为什么要这个：-nographic 只能看串口，
+# 而登录字标、颜色、字体这些**只有 VGA 上才看得出问题** —— 串口日志里
+# 块字符是转义字节，看不出渐变对不对。
+#
+# 三种取证手段，配合这个模式用：
+#   1. 肉眼看窗口
+#   2. QEMU monitor 的 screendump 抓屏（脚本化，见 docs/testing.md）
+#   3. serial 日志并行写文件，grep 关键字比截图快
+#
+# Windows/Linux 上没有 cocoa：改成 -display gtk 或 -display sdl。
+gui() {
+    prepare
+    local dir; dir=$(vm_dir)
+    local bin="qemu-system-$ARCH"
+    command -v "$bin" >/dev/null || die "找不到 ${bin}。brew install qemu"
+
+    case "$(uname -s)" in
+        Darwin) : ;;
+        *) warn "非 macOS：cocoa 不可用，请把 -display cocoa 改成 gtk 或 sdl" ;;
+    esac
+
+    read_args
+
+    # virtio-gpu + USB 键盘/鼠标。不加 usb-kbd 时窗口里收不到按键。
+    ARGS+=(
+        -device virtio-gpu-pci
+        -device qemu-xhci,id=xhci
+        -device usb-kbd,bus=xhci.0
+        -device usb-tablet,bus=xhci.0
+    )
+    ARGS+=(-drive "file=$dir/disk.qcow2,format=qcow2,if=virtio")
+    ARGS+=(-display "cocoa,show-cursor=on")
+
+    # 串口并行写文件：截图只能看到当前屏，日志能回看整段启动过程。
+    # monitor 走 unix socket，用于 screendump / sendkey（见 docs/testing.md）。
+    mkdir -p "$dir/logs"
+    ARGS+=(-serial "file:$dir/logs/serial.log")
+    ARGS+=(-monitor "unix:$dir/logs/monitor.sock,server,nowait")
+
+    log "启动（cocoa 窗口）。关窗口或 Ctrl-C 退出"
+    log "串口日志：$dir/logs/serial.log"
+    log "monitor：$dir/logs/monitor.sock（screendump / sendkey 用它）"
+    log "登录：Login: 输 root / 123456（要 --root-password 构建的镜像）"
+    [ "$PANEL_PORT" != 0 ] && log "面板：宿主机 http://127.0.0.1:${PANEL_PORT}"
+
+    exec "$bin" "${ARGS[@]}"
 }
 
 serve() {

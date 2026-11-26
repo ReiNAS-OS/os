@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# ReiNAS OS — 本机起测（拉 CI 产物 + QEMU 串口控制台）
+# ReiNAS OS — 本机起测（拉 CI 产物 + QEMU 起虚机）
 #
 # 用法:
 #   ./scripts/vm.sh list                 # 列出 CI 最近的镜像构建
 #   ./scripts/vm.sh pull [RUN_ID]        # 拉产物到 .vm/<arch>/（默认最新一次成功构建）
 #   ./scripts/vm.sh boot                 # 首启：建 overlay + OVMF vars，串口控制台
+#   ./scripts/vm.sh gui                  # 同上，但开 GUI 窗口（串口日志并行写文件）
 #   ./scripts/vm.sh install              # 用 install.iso 装到一块空盘（自动应答确认）
 #   ./scripts/vm.sh serve [FILE]         # 宿主起 HTTP 服务，虚机里从 10.0.2.2:8000 取
 #   ./scripts/vm.sh status               # 看 .vm 里有什么
@@ -20,8 +21,11 @@
 #   INSTALL_TARGET   装机目标盘大小，默认 40G
 #
 # 为什么不用 SSH：镜像默认不开 SSH 密码登录（D-007），而且验证阶段的目标
-# 就是「像真机一样用」。QEMU 串口控制台等价于插显示器，看得见 issue、
-# 能登 root、能跑 smoke.sh。要往虚机里送文件用 serve + curl。
+# 就是「像真机一样用」。要往虚机里送文件用 serve + curl。
+#
+# boot 与 gui 的选择：boot 是串口控制台（-nographic），适合看内核日志、跑命令；
+# gui 开 cocoa 窗口，是唯一能看清登录字标颜色/块字符/字体的模式 —— 串口日志里
+# 那些是转义字节，肉眼没法判断。改登录界面后必须用 gui 验收。
 #
 # 为什么 Apple Silicon 上必须选 aarch64：qemu-system-x86_64 在这台机器上
 # 只有 tcg（纯软件模拟），启动到登录 5-15 分钟；aarch64 有 hvf 硬件加速，
@@ -56,6 +60,7 @@ case "${1:-}" in
     list)    list_runs ;;
     pull)    shift; pull "${1:-}" ;;
     boot)    boot ;;
+    gui)     gui ;;
     install) install ;;
     serve)   shift; serve "${1:-}" ;;
     status)  status ;;
