@@ -97,14 +97,10 @@ install -d %{buildroot}%{_datadir}/dnf5/libdnf.conf.d
 install -m 0644 files/os-release         %{buildroot}%{_prefix}/lib/os-release
 install -m 0644 files/reinas-release     %{buildroot}%{_prefix}/lib/reinas-release
 install -m 0644 files/system-release-cpe %{buildroot}%{_prefix}/lib/system-release-cpe
-install -m 0644 files/issue              %{buildroot}%{_prefix}/lib/issue
-install -m 0644 files/issue.net          %{buildroot}%{_prefix}/lib/issue.net
 
 ln -sf ../usr/lib/os-release         %{buildroot}%{_sysconfdir}/os-release
 ln -sf ../usr/lib/reinas-release     %{buildroot}%{_sysconfdir}/reinas-release
 ln -sf ../usr/lib/system-release-cpe %{buildroot}%{_sysconfdir}/system-release-cpe
-ln -sf ../usr/lib/issue              %{buildroot}%{_sysconfdir}/issue
-ln -sf ../usr/lib/issue.net          %{buildroot}%{_sysconfdir}/issue.net
 
 # 兼容文件：很多第三方脚本只检查这两个文件是否存在
 install -m 0644 files/reinas-release %{buildroot}%{_sysconfdir}/redhat-release
@@ -139,13 +135,9 @@ install -m 0644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 %{_prefix}/lib/os-release
 %{_prefix}/lib/reinas-release
 %{_prefix}/lib/system-release-cpe
-%{_prefix}/lib/issue
-%{_prefix}/lib/issue.net
 %{_sysconfdir}/os-release
 %{_sysconfdir}/reinas-release
 %{_sysconfdir}/system-release-cpe
-%config(noreplace) %{_sysconfdir}/issue
-%config(noreplace) %{_sysconfdir}/issue.net
 %{_sysconfdir}/redhat-release
 %{_sysconfdir}/system-release
 

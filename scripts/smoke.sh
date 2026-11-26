@@ -31,10 +31,12 @@ chk "root锁定"    "passwd -S root | cut -d' ' -f2"     'L'
 chk "sshd root"   "grep -h PermitRootLogin /etc/ssh/sshd_config.d/*.conf" 'prohibit-password'
 echo "--- 服务 ---"
 chk "sshd"        "systemctl is-enabled sshd"          'enabled'
-chk "cockpit"     "systemctl is-enabled cockpit.socket" 'enabled'
 chk "chronyd"     "systemctl is-enabled chronyd"       'enabled'
 chk "firewalld"   "systemctl is-enabled firewalld"     'enabled'
 chk "smb关闭"     "systemctl is-enabled smb 2>&1"      'disabled'
+# Cockpit 和 podman 已按 D-009 移除（自有面板取代，见 docs/decisions-panel.md）。
+# 断言「已移除」而不是删掉检查：以后有人把它们加回来，这里会红。
+chk "cockpit移除" "rpm -q cockpit 2>&1"                'not installed'
 echo "--- 存储 ---"
 chk "btrfs根"     "findmnt -no FSTYPE /"               'btrfs'
 chk "子卷root"    "btrfs subvolume list / | grep -c '@root\|root'"  '[1-9]'
@@ -44,8 +46,7 @@ echo "--- 包 ---"
 chk "reinas-release" "rpm -q reinas-release"           'reinas-release-0.1.0'
 chk "samba"       "rpm -q samba"                       'samba-'
 chk "nfs-utils"   "rpm -q nfs-utils"                   'nfs-utils-'
-chk "cockpit"     "rpm -q cockpit"                     'cockpit-'
-chk "podman"      "rpm -q podman"                      'podman-'
+chk "podman移除"  "rpm -q podman 2>&1"                 'not installed'
 echo "--- 仓库 ---"
 chk "dnf仓库"     "dnf repolist 2>/dev/null | grep -c 'fedora'"  '[1-9]'
 echo
