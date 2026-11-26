@@ -206,9 +206,8 @@ firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || t
 #   1. 必须 -n/--skip-login。不加的话 agetty 会先打它自己的 "login: "，
 #      再调 -l 脚本，屏幕上就是两行提示叠着（实测过）。
 #   2. 必须 -l 指向包装脚本，用户名由脚本 read 进来再传给 login。
-#   3. drop-in 放在 getty@.service.d/ 模板上，不要放具体实例目录 ——
-#      tty1（VGA）和 serial-getty@ttyXXX 都从模板派生，一处覆盖两边。
-#      只改串口时物理屏幕还是旧的（这个坑实测踩过）。
+#   3. drop-in 要同时写 getty@.service 和 serial-getty@.service 两个模板 ——
+#      它们互相不继承，只写一个的话另一半终端仍是 agetty 原版提示。
 cat > /usr/local/sbin/reinas-login <<'LOGINEOF'
 #!/bin/bash
 # getty 的登录提示包装。agetty 用 -n 跳过了自己的提示，这里全权负责。
@@ -219,13 +218,19 @@ exec /usr/bin/login "$user"
 LOGINEOF
 chmod 0755 /usr/local/sbin/reinas-login
 
-mkdir -p /etc/systemd/system/getty@.service.d
-cat > /etc/systemd/system/getty@.service.d/10-prompt.conf <<'EOF'
+# ⚠️ 两个模板都要写，不能只写 getty@：serial-getty@.service **不继承**
+#    getty@.service 的 drop-in，它们是两个独立的模板文件。只给 getty@ 加时，
+#    VGA 上已经是 Login:，串口却还是 agetty 原版的 "ReiNAS login:"
+#    （这个坑实测踩过，两边的 ExecStart 要分别查）。
+for tmpl in getty@.service serial-getty@.service; do
+    mkdir -p "/etc/systemd/system/${tmpl}.d"
+    cat > "/etc/systemd/system/${tmpl}.d/10-prompt.conf" <<'EOF'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --skip-login -l /usr/local/sbin/reinas-login %I $TERM
 EOF
-chmod 0644 /etc/systemd/system/getty@.service.d/10-prompt.conf
+    chmod 0644 "/etc/systemd/system/${tmpl}.d/10-prompt.conf"
+done
 
 # ============================================================
 #  9. 登录前提示（管理面板地址）
