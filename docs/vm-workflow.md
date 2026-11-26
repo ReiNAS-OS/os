@@ -7,15 +7,17 @@
 
 ---
 
-## 两个启动模式，别选错
+## 三个启动模式，别选错
 
-| | `vm.sh boot`（`-nographic`） | `vm.sh gui`（cocoa 窗口） |
-|---|---|---|
-| 看得到 | 只有串口文字 | 真实 VGA 画面 |
-| 字标颜色/渐变 | ❌ 日志里是转义字节 | ✅ |
-| 字体、块字符是否画得出来 | ❌ | ✅ |
-| 脚本化抓屏 | 不行 | ✅ monitor socket |
-| 适合 | 看内核日志、跑命令 | **验证登录界面长相** |
+| | `vm.sh boot`（`-nographic`） | `vm.sh gui`（cocoa 窗口） | `vm.sh dev`（开发） |
+|---|---|---|---|
+| 看得到 | 只有串口文字 | 真实 VGA 画面 | 只有串口文字 |
+| 字标颜色/渐变 | ❌ 日志里是转义字节 | ✅ | ❌ |
+| 字体、块字符是否画得出来 | ❌ | ✅ | ❌ |
+| 脚本化抓屏 | 不行 | ✅ monitor socket | 不行 |
+| 串口可写（能敲命令） | ✅ | ❌ 单向 | ✅ socket |
+| 挂载宿主目录 | ❌ | ❌ | ✅ 9p |
+| 适合 | 看内核日志、跑命令 | **验证登录界面长相** | **改代码看效果** |
 
 登录字标、16 色渐变、块字符这些只有 VGA 上才看得出对错 —— 串口日志里它们是
 `M-^VM-^R` 这样的转义字节，肉眼没法判断。**改登录界面后必须用 `gui` 验收。**
@@ -25,6 +27,75 @@
 - 挂 QEMU monitor 到 `.vm/<arch>/logs/monitor.sock`（抓屏、模拟按键）
 - 串口并行写 `.vm/<arch>/logs/serial.log`（回看整段启动过程比截图快）
 - 加 `virtio-gpu-pci` + USB 键盘鼠标（不加 `usb-kbd` 时窗口里收不到按键）
+
+⚠️ **`gui` 的串口不能输入。** 它用的是 `-serial file:`，单向；monitor 的
+`sendkey` 注入的是 USB 键盘，只作用于 VGA 的 tty，对着串口登录提示发没有任何
+反应。要脚本化敲命令用 `dev`，或者参考 `vm-install.sh` 的 chardev socket 写法。
+
+---
+
+## 开发模式：改代码立刻在虚机里看到
+
+```bash
+./scripts/vm.sh dev
+```
+
+做三件事：
+
+1. 把 `../controller` 以 **9p** 挂到虚机的 `/mnt/reinas`（`mount_tag=reinas`）
+2. 串口走 `-chardev socket`，可读可写
+3. 面板端口照常转发到宿主的 `127.0.0.1:5090`
+
+虚机里第一次要装 bun（**镜像本身不带，这是开发环境不是产物形态**）：
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+挂载并启动：
+
+```bash
+mkdir -p /mnt/reinas
+mount -t 9p -o trans=virtio,version=9p2000.L reinas /mnt/reinas
+cd /mnt/reinas && bun install && bun run dev
+```
+
+宿主打开 `http://127.0.0.1:5090` 就是虚机里 dev server 的页面。**改宿主上的
+`.tsx`，虚机里自动重新打包**（日志出现 `Bundled page in Nms`），刷新浏览器
+即见新内容。
+
+往串口敲命令（脚本化）：
+
+```bash
+printf '%s\r' '此处填命令' | nc -U -w 3 .vm/aarch64/logs/console.sock
+```
+
+### 为什么 dev 要单独一个子命令
+
+「构建 → 交叉编译 105 MB → 传输 → 运行」是**验证交付物**的路子，改一行前端
+就要走一遍几十秒的流程。开发要的是改完立刻看到。9p 让宿主和虚机共享同一份
+源码，省掉构建和传输两步。
+
+### 两个前置条件
+
+- **9p 内核模块**。镜像里 `9p` / `9pnet_virtio` 已在，`modprobe` 直接可用。
+  要验证：`lsmod | grep 9p`。
+- **虚机能上网**。QEMU user 网络自带 NAT，`curl https://bun.sh` 通就能装。
+
+### 镜像里 dnf 装不了东西（已知）
+
+`/etc/yum.repos.d/` 里只有 `reinas.repo`，而它指向 `repo.reinas.example`
+（未部署，`enabled=0`）。**Fedora 官方 repo 文件根本不在镜像里** ——
+`reinas-release` 只 Obsolete 了 `fedora-release-*`，没接管 `fedora-repos`，
+所以没有 `fedora.repo` / `fedora-updates.repo`。
+
+后果：`dnf install` 什么都装不上（`No matches found: no repositories are
+enabled`），所以上面装 bun 走的是直接下载 zip + `python3 -c zipfile` 解压，
+没用 `dnf install unzip`。
+
+这与 `testing.md` 里「dnf 可用 / 能看到 fedora、updates」的验收项矛盾，那个
+结论现在不成立。修法是让 `reinas-release` 也提供 repo 文件或 `Provides:
+fedora-repos`，属于镜像侧的待办。
 
 ---
 

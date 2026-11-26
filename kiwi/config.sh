@@ -184,13 +184,18 @@ EOF
 # ============================================================
 #  8. 防火墙：只开管理端口和 NAS 端口
 # ============================================================
-# ⚠️ 不开 9090（Cockpit 已移除）。面板规划用 5090，但服务还没做出来 ——
-#    面板就绪后要在这里 add-port=5090/tcp。
+# 不开 9090（Cockpit 已移除，见 D-009）。5090 是 reinas 面板端口。
+#
+# 5090 必须开：登录提示里打的 `Web console: https://<ip>:5090` 指向它
+# （第 9 节的 reinas-issue-update），端口不开那行提示就是连不上的死链。
+# 实测漏掉这条时，QEMU 端口转发会卡在 CLOSE_WAIT——宿主 TCP 连得上，
+# 服务端收不到请求，看起来像面板坏了。
 firewall-offline-cmd --zone=public --add-service=ssh        >/dev/null 2>&1 || true
 firewall-offline-cmd --zone=public --add-service=samba      >/dev/null 2>&1 || true
 firewall-offline-cmd --zone=public --add-service=nfs        >/dev/null 2>&1 || true
 firewall-offline-cmd --zone=public --add-service=mountd     >/dev/null 2>&1 || true
 firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || true
+firewall-offline-cmd --zone=public --add-port=5090/tcp      >/dev/null 2>&1 || true
 
 # ============================================================
 #  8.5 登录提示词：自己打 Login:

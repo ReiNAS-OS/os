@@ -7,6 +7,8 @@
 #   ./scripts/vm.sh pull [RUN_ID]        # 拉产物到 .vm/<arch>/（默认最新一次成功构建）
 #   ./scripts/vm.sh boot                 # 首启：建 overlay + OVMF vars，串口控制台
 #   ./scripts/vm.sh gui                  # 同上，但开 GUI 窗口（串口日志并行写文件）
+#   ./scripts/vm.sh dev                  # 开发模式：9p 共享 controller 仓库，
+#                                        # 双向串口，虚机里跑 bun run dev
 #   ./scripts/vm.sh install              # 用 install.iso 装到一块空盘（自动应答确认）
 #   ./scripts/vm.sh serve [FILE]         # 宿主起 HTTP 服务，虚机里从 10.0.2.2:8000 取
 #   ./scripts/vm.sh status               # 看 .vm 里有什么
@@ -61,13 +63,14 @@ case "${1:-}" in
     pull)    shift; pull "${1:-}" ;;
     boot)    boot ;;
     gui)     gui ;;
+    dev)     dev ;;
     install) install ;;
     serve)   shift; serve "${1:-}" ;;
     status)  status ;;
     clean)   clean ;;
     *)
         # 用法说明只在本文件顶部。别用 $0 —— 脚本被 source 时它不对。
-        sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+        sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
         exit 1
         ;;
 esac
