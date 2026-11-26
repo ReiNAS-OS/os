@@ -25,6 +25,9 @@ chk "NAME"        "grep ^NAME= /etc/os-release"        'ReiNAS'
 chk "VERSION"     "grep ^VERSION= /etc/os-release"     '0.1.0'
 chk "ID_LIKE"     "grep ^ID_LIKE= /etc/os-release"     'fedora'
 chk "releasever"  "cat /etc/dnf/vars/releasever"       '45'
+# hostname 取自 os-release 的 DEFAULT_HOSTNAME（镜像里没有 /etc/hostname）。
+# uname -a 的第二个字段就是它，所以这条同时守着 `uname -a` 显示成 ReiNAS。
+chk "hostname"    "hostname"                           '^ReiNAS$'
 echo "--- 安全 ---"
 chk "SELinux"     "getenforce"                         'Enforcing'
 chk "root锁定"    "passwd -S root | cut -d' ' -f2"     'L'
@@ -49,5 +52,10 @@ chk "nfs-utils"   "rpm -q nfs-utils"                   'nfs-utils-'
 chk "podman移除"  "rpm -q podman 2>&1"                 'not installed'
 echo "--- 仓库 ---"
 chk "dnf仓库"     "dnf repolist 2>/dev/null | grep -c 'fedora'"  '[1-9]'
+echo "--- 登录体验 ---"
+# 登录提示词只留 login:，不带主机名前缀（字标里已经有 ReiNAS）。
+# drop-in 在模板上，tty1 和串口都走它，所以查配置就够，不用真的开终端。
+chk "getty无主机名" "grep -c 'nohostname' /etc/systemd/system/getty@.service.d/10-nohostname.conf 2>&1" '[1-9]'
+chk "字标就位"     "test -f /etc/issue.d/10-reinas.issue && echo ok"  'ok'
 echo
 if [ "$fail" = 0 ]; then echo "✅ 全部通过"; else echo "❌ 有失败项"; exit 1; fi

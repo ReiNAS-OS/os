@@ -32,7 +32,7 @@ cd os/
 ./scripts/vm.sh boot          # 起虚机，串口控制台就是显示器
 
 # 控制台里
-reinas login: root
+login: root
 Password:     123456
 ```
 

@@ -38,7 +38,7 @@ sudo ./scripts/build.sh --root-password    # 开发构建：root / 123456
 ./scripts/vm.sh boot      # 起虚机，串口控制台
 ```
 
-控制台提示 `reinas login:` 输 `root` / `123456`（CI 构建时开了 root 密码）。
+控制台提示 `login:` 输 `root` / `123456`（CI 构建时开了 root 密码）。
 Apple Silicon 默认拉 aarch64 —— `qemu-system-x86_64` 在这台机器上只有 tcg，
 启动要 5-15 分钟；aarch64 有 hvf，20 秒。
 

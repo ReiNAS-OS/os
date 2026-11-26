@@ -193,6 +193,27 @@ firewall-offline-cmd --zone=public --add-service=mountd     >/dev/null 2>&1 || t
 firewall-offline-cmd --zone=public --add-service=rpc-bind   >/dev/null 2>&1 || true
 
 # ============================================================
+#  8.5 登录提示词不显示主机名
+# ============================================================
+# 默认 agetty 打的是「<hostname> login:」，即 ReiNAS login:。字标里已经有
+# 大大的 ReiNAS，这一行再重复一遍是噪音，所以关掉主机名前缀，只留 login:。
+#
+# 用模板 drop-in（getty@.service.d/）而不是具体实例：tty1 的 getty@tty1.service
+# 和串口的 serial-getty@ttyAMA0.service 都从模板派生，一处覆盖两边都生效。
+# 只改 serial-getty 的话，物理屏幕/VGA 上仍然是旧的「ReiNAS login:」。
+#
+# ⚠️ 必须先用空的 ExecStart= 清掉模板里的原值，再写新值 —— systemd 对
+#    ExecStart 是「清空后才接受新值」，不写那行空赋值会直接报错启动失败。
+#    `%I` 是实例名（tty1 / ttyAMA0），不能写死。
+mkdir -p /etc/systemd/system/getty@.service.d
+cat > /etc/systemd/system/getty@.service.d/10-nohostname.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --nohostname --noclear %I $TERM
+EOF
+chmod 0644 /etc/systemd/system/getty@.service.d/10-nohostname.conf
+
+# ============================================================
 #  9. 登录前提示（管理面板地址）
 # ============================================================
 install -d /usr/lib/reinas
