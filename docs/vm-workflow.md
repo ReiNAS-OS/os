@@ -49,8 +49,11 @@ dnf install -y unzip
 curl -fsSL https://bun.sh/install | bash
 
 cd /root/reinas && bun install
-cd /root/reinas/apps/cli && bun --watch src/main.ts serve --dev
+cd /root/reinas/apps/cli && bun src/main.ts serve
 ```
+
+`vm.sh sync` 会用 systemd 托管这个进程（`reinas-dev.service`），之后改代码
+不用手动重启。
 
 宿主打开 `http://127.0.0.1:5090` 就是虚机里的页面。改宿主 `.tsx` → fswatch
 触发 rsync → 重启虚机里的 dev server（`systemd-run` 托管）→ 刷新浏览器即见
@@ -101,12 +104,15 @@ macOS 自带的 `/usr/bin/rsync` 是 openrsync（协议 2.6.9），不认
 
 `brew install rsync` 后脚本会自动挑 `/opt/homebrew/bin/rsync`（3.x）。
 
-**2. 不要用 `bun run dev` / `turbo run dev`**
+**2. 不要用 `bun run dev` / `turbo run dev` / `bun --watch`**
 
 turbo 会把任务放进自己的进程组，`bun --watch` 的文件监听在那一层之下不生效
 ——实测改了 `.tsx`，bundle 不重新编译（日志里始终只有第一条
-`Bundled page in Nms`，没有新的）。直接 `bun --watch src/main.ts serve --dev`
-才正常。
+`Bundled page in Nms`，没有新的）。
+
+去掉 turbo 直接用 `bun --watch` 也不可靠：某次改动它编译了，之后再改就再也
+不触发。所以现在不用 watch，改成 **rsync 之后用 systemd 重启服务**——见上面
+「`vm.sh sync` 做的事」。
 
 **3. sshd drop-in 的命名**
 

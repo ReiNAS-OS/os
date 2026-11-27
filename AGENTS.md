@@ -57,6 +57,12 @@ python3 scripts/check-xml.py --online kiwi/reinas.kiwi
 
 `static-check.yml` 跑的就是这一套，别等 CI 才发现。
 
+**新克隆必做一次**，否则提交钩子不生效（文件和 20 KB 大小检查都在里面）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## 这个项目特有的坑
 
 完整清单在 `docs/kiwi-pitfalls.md`。最容易踩的六条：
