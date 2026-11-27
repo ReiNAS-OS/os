@@ -108,7 +108,13 @@ if [ -n "${REINAS_ROOT_PASSWORD}" ]; then
     # 默认的 sshd 配置是 PermitRootLogin prohibit-password +
     # PasswordAuthentication no，两样都挡住 root 密码登录。
     # 这里单独放一个 drop-in 覆盖，且只在开关打开时存在。
-    cat > /etc/ssh/sshd_config.d/20-reinas-root.conf <<'EOF'
+    #
+    # ⚠️ 文件名必须是 05- 开头，不能用 20-。
+    #    sshd 对同一个选项**取第一次读到的值**，不是最后一次。10-reinas.conf
+    #    里的 "PasswordAuthentication no" 如果排在前面，这个 20- 的 "yes"
+    #    会被忽略——实测表现是控制台能登录、SSH 报 Permission denied
+    #    (publickey)，非常难排查。05- 排到 10- 前面才盖得住。
+    cat > /etc/ssh/sshd_config.d/05-reinas-root.conf <<'EOF'
 # ⚠️ 只有 build.sh --root-password 时才写入。生产构建里不存在本文件。
 PermitRootLogin yes
 PasswordAuthentication yes
@@ -119,11 +125,11 @@ EOF
 This image was built with a root password enabled.
 
   user: root
-  auth: password (see /etc/ssh/sshd_config.d/20-reinas-root.conf)
+  auth: password (see /etc/ssh/sshd_config.d/05-reinas-root.conf)
 
 Do not distribute. Rebuild without ./scripts/build.sh --root-password.
 EOF
-    chmod 0644 /etc/ssh/sshd_config.d/20-reinas-root.conf \
+    chmod 0644 /etc/ssh/sshd_config.d/05-reinas-root.conf \
         /etc/reinas/BUILD-HAS-ROOT-PASSWORD
 else
     echo "==== 生产形态：root 锁定，SSH 仅公钥 ===="

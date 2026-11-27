@@ -7,8 +7,9 @@
 #   ./scripts/vm.sh pull [RUN_ID]        # 拉产物到 .vm/<arch>/（默认最新一次成功构建）
 #   ./scripts/vm.sh boot                 # 首启：建 overlay + OVMF vars，串口控制台
 #   ./scripts/vm.sh gui                  # 同上，但开 GUI 窗口（串口日志并行写文件）
-#   ./scripts/vm.sh dev                  # 开发模式：9p 共享 controller 仓库，
-#                                        # 双向串口，虚机里跑 bun run dev
+#   ./scripts/vm.sh dev                  # 开发模式：虚机 + SSH 端口转发
+#   ./scripts/vm.sh sync                 # fswatch 监听源码，rsync 进虚机本地盘
+#   ./scripts/vm.sh key                  # 把宿主公钥装进虚机（rsync 免密用）
 #   ./scripts/vm.sh install              # 用 install.iso 装到一块空盘（自动应答确认）
 #   ./scripts/vm.sh serve [FILE]         # 宿主起 HTTP 服务，虚机里从 10.0.2.2:8000 取
 #   ./scripts/vm.sh status               # 看 .vm 里有什么
@@ -40,6 +41,7 @@
 #   vm-common.sh    日志、架构探测、固件路径、QEMU 参数底座
 #   vm-artifacts.sh 从 CI 拉产物
 #   vm-image.sh     起虚机、宿主 HTTP 服务、状态与清理
+#   vm-dev.sh       开发模式：虚机 + SSH 转发 + fswatch/rsync 源码同步
 #   vm-install.sh   装机（比 boot 复杂得多，单独一个文件）
 #
 # 加功能时先想它属于哪一类，别往 vm.sh 里堆。
@@ -55,6 +57,8 @@ cd "$REPO_ROOT"
 . "$REPO_ROOT/scripts/lib/vm-artifacts.sh"
 # shellcheck source=lib/vm-image.sh
 . "$REPO_ROOT/scripts/lib/vm-image.sh"
+# shellcheck source=lib/vm-dev.sh
+. "$REPO_ROOT/scripts/lib/vm-dev.sh"
 # shellcheck source=lib/vm-install.sh
 . "$REPO_ROOT/scripts/lib/vm-install.sh"
 
@@ -64,6 +68,8 @@ case "${1:-}" in
     boot)    boot ;;
     gui)     gui ;;
     dev)     dev ;;
+    sync)    sync ;;
+    key)     key ;;
     install) install ;;
     serve)   shift; serve "${1:-}" ;;
     status)  status ;;

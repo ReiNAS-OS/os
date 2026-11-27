@@ -16,7 +16,7 @@
 | 字体、块字符是否画得出来 | ❌ | ✅ | ❌ |
 | 脚本化抓屏 | 不行 | ✅ monitor socket | 不行 |
 | 串口可写（能敲命令） | ✅ | ❌ 单向 | ✅ socket |
-| 挂载宿主目录 | ❌ | ❌ | ✅ 9p |
+| 源码同步 | ❌ | ❌ | ✅ rsync 到本地盘 |
 | 适合 | 看内核日志、跑命令 | **验证登录界面长相** | **改代码看效果** |
 
 登录字标、16 色渐变、块字符这些只有 VGA 上才看得出对错 —— 串口日志里它们是
@@ -37,50 +37,90 @@
 ## 开发模式：改代码立刻在虚机里看到
 
 ```bash
-./scripts/vm.sh dev
+./scripts/vm.sh dev      # 终端 A：起虚机，转发 5090（面板）和 5099（SSH）
+./scripts/vm.sh key      # 一次性：把宿主公钥装进虚机
+./scripts/vm.sh sync     # 终端 B：fswatch 监听源码，rsync 进虚机本地盘
 ```
-
-做三件事：
-
-1. 把 `../controller` 以 **9p** 挂到虚机的 `/mnt/reinas`（`mount_tag=reinas`）
-2. 串口走 `-chardev socket`，可读可写
-3. 面板端口照常转发到宿主的 `127.0.0.1:5090`
 
 虚机里第一次要装 bun（**镜像本身不带，这是开发环境不是产物形态**）：
 
 ```bash
+dnf install -y unzip
 curl -fsSL https://bun.sh/install | bash
+
+cd /root/reinas && bun install
+cd /root/reinas/apps/cli && bun --watch src/main.ts serve --dev
 ```
 
-挂载并启动：
+宿主打开 `http://127.0.0.1:5090` 就是虚机里的页面。改宿主 `.tsx` → fswatch
+触发 rsync → 重启虚机里的 dev server（`systemd-run` 托管）→ 刷新浏览器即见
+新内容。改一次约 3-6 秒。
 
-```bash
-mkdir -p /mnt/reinas
-mount -t 9p -o trans=virtio,version=9p2000.L reinas /mnt/reinas
-cd /mnt/reinas && bun install && bun run dev
-```
-
-宿主打开 `http://127.0.0.1:5090` 就是虚机里 dev server 的页面。**改宿主上的
-`.tsx`，虚机里自动重新打包**（日志出现 `Bundled page in Nms`），刷新浏览器
-即见新内容。
-
-往串口敲命令（脚本化）：
+往串口敲命令（脚本化，不依赖 SSH）：
 
 ```bash
 printf '%s\r' '此处填命令' | nc -U -w 3 .vm/aarch64/logs/console.sock
 ```
 
+### 为什么用 rsync 而不是共享文件夹
+
+**共享文件系统不投递 inotify 事件**，dev server 的 watch 在挂载目录上不触发，
+热更新等于没有。实测和查证过的：
+
+| 方案 | inotify |
+|---|---|
+| QEMU 9p | ❌ mtime 能传播，但 `inotifywait` 一条事件都收不到 |
+| VirtualBox vboxsf | ❌ 官方 ticket #10660 标记 wontfix |
+| NFS / SMB | ❌ 协议层不传 |
+| **虚机本地盘**（ext4/btrfs） | ✅ 正常 |
+
+macOS + QEMU 的组合用不了 virtiofs（QEMU 没编 `vhost-user-fs`，macOS 也没
+`virtiofsd`），9p 是唯一选项，而它不行。所以源码得真正搬进虚机的本地盘。
+
+`vm.sh sync` 做的事：`fswatch -o -l 0.3` 监听宿主目录，攒 300ms 合批后跑一次
+`rsync -rlz --delete`，推到 `/root/reinas`，然后用 `systemctl restart
+reinas-dev.service` 让服务重新编译。
+
+**为什么要重启而不是靠 `--watch`**：实测 `bun --watch` 在这个环境里不可靠
+——某次改动它编译了，之后再改就再也不触发，日志停在最后一条
+`Bundled page in Nms` 不动。源文件、mtime、进程都确认更新了，bundle hash
+也变了，但产物内容始终是旧的。查不到缓存失效条件，所以改用「同步即重启」
+这个笨但确定的办法。
+
+**为什么 rsync 用 `-rlz` 而不是 `-a`**：`-a` 隐含 `-t`（保留 mtime），会把
+宿主的 mtime 原样复制到虚机，Bun 据此认为文件没变。`-rlz` 不保留时间戳，
+文件落地时拿到"现在"的 mtime。
+
+### 三个坑
+
+**1. 必须用 Homebrew 的 rsync**
+
+macOS 自带的 `/usr/bin/rsync` 是 openrsync（协议 2.6.9），不认
+`--chmod=D755,F644` 和 `--no-owner`。会把宿主的 UID 501 和 600 权限原样带到
+虚机，虚机里以 root 跑的 `bun --watch` 在这种属主下**不会触发重编译**。
+
+`brew install rsync` 后脚本会自动挑 `/opt/homebrew/bin/rsync`（3.x）。
+
+**2. 不要用 `bun run dev` / `turbo run dev`**
+
+turbo 会把任务放进自己的进程组，`bun --watch` 的文件监听在那一层之下不生效
+——实测改了 `.tsx`，bundle 不重新编译（日志里始终只有第一条
+`Bundled page in Nms`，没有新的）。直接 `bun --watch src/main.ts serve --dev`
+才正常。
+
+**3. sshd drop-in 的命名**
+
+`05-reinas-root.conf` 不能叫 `20-reinas-root.conf`。sshd 对同一个选项**取
+第一次读到的值**，`10-reinas.conf` 里的 `PasswordAuthentication no` 排在前面
+就盖住了。没有 SSH 就没有 rsync，dev 模式直接废掉。
+
 ### 为什么 dev 要单独一个子命令
 
 「构建 → 交叉编译 105 MB → 传输 → 运行」是**验证交付物**的路子，改一行前端
-就要走一遍几十秒的流程。开发要的是改完立刻看到。9p 让宿主和虚机共享同一份
-源码，省掉构建和传输两步。
+就要走一遍几十秒的流程。开发要的是改完立刻看到。
 
-### 两个前置条件
-
-- **9p 内核模块**。镜像里 `9p` / `9pnet_virtio` 已在，`modprobe` 直接可用。
-  要验证：`lsmod | grep 9p`。
-- **虚机能上网**。QEMU user 网络自带 NAT，`curl https://bun.sh` 通就能装。
+而且面板的大量功能要调 Linux 命令（`lsblk`、`btrfs`、`useradd`、`/proc`），
+macOS 上这些根本不存在——只能在真 Linux 里开发。
 
 ### 装 bun 用 dnf
 

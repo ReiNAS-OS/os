@@ -20,6 +20,10 @@ readonly VM_ROOT="$REPO_ROOT/.vm"
 VM_MEM="${VM_MEM:-4096}"
 VM_CPUS="${VM_CPUS:-4}"
 PANEL_PORT="${PANEL_PORT:-5090}"
+# dev 模式下转发虚机 22 到宿主的这个端口，给 rsync 用。0 = 不转发。
+DEV_SSH_PORT="${DEV_SSH_PORT:-5099}"
+# 源码在虚机里的落点。必须是本地盘（不是挂载目录），否则热更新不工作。
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/root/reinas}"
 
 BLUE=$'\033[34m'; GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 # 日志全部走 stderr。有几个函数（find_base_image 等）用 $(...) 把路径返回给

@@ -190,11 +190,21 @@ base_args() {
     # "Waiting for entropy" 卡住几十秒。
     printf '%s\n' -device virtio-rng-pci
 
-    # 网络：只转发面板端口。不开 22 —— 镜像默认禁 SSH 密码登录（D-007），
-    # 送文件走 serve（虚机里 curl 10.0.2.2:8000）。
+    # 网络。
+    #
+    # 面板端口一直转发。SSH 只在 dev 模式转（DEV_SSH_PORT），用途是让宿主
+    # 用 rsync 把源码推到虚机本地盘——9p/vboxsf 这类共享文件系统不投递
+    # inotify 事件，dev server 的热更新在挂载目录上根本不触发，所以开发时
+    # 必须走"同步到本地盘"这条路。
+    #
+    # 生产镜像默认禁 SSH 密码登录（D-007），开发构建（--root-password）
+    # 才放开，所以 dev 模式依赖的正是开发构建的镜像。
     local netdev="user,id=n0"
     if [ "$PANEL_PORT" != 0 ]; then
         netdev="$netdev,hostfwd=tcp::${PANEL_PORT}-:5090"
+    fi
+    if [ "${DEV_SSH_PORT:-0}" != 0 ]; then
+        netdev="$netdev,hostfwd=tcp::${DEV_SSH_PORT}-:22"
     fi
     printf '%s\n' -netdev "$netdev" -device virtio-net-pci,netdev=n0
 
@@ -295,64 +305,6 @@ serve() {
     log "退出：Ctrl-C"
     cd "$dir/serve"
     exec python3 -m http.server 8000
-}
-
-# 开发模式：把 controller 仓库以 9p 共享进虚机，在里面跑 `bun run dev`。
-#
-# 为什么不用「构建 → 传二进制 → 跑」：那是验证交付物的路子，改一行就得
-# 重新交叉编译（几十秒）再传 105M。开发时想要的是改完立刻看到效果。
-#
-# 三个前提，缺一不可：
-#   1. 虚机里装了 bun —— 镜像本身没有，dev 模式是**开发环境**，不是产物形态
-#   2. 9p 内核模块 —— 镜像里 9p / 9pnet_virtio 已在，实测 modprobe 即可
-#   3. 串口可写 —— 用 -chardev socket，不是 gui 那个单向的 -serial file:
-#
-# 挂载点在虚机里固定 /mnt/reinas，靠 MOUNT_TAG 匹配，不要改成一个宿主机
-# 路径（9p 的 mount_tag 是标签不是路径）。
-dev() {
-    prepare
-    local dir; dir=$(vm_dir)
-    local bin="qemu-system-$ARCH"
-    command -v "$bin" >/dev/null || die "找不到 ${bin}。brew install qemu / dnf install qemu-system-$ARCH"
-
-    local shared="${SHARED_DIR:-$REPO_ROOT/../controller}"
-    [ -d "$shared" ] || die "共享目录不存在: $shared（用 SHARED_DIR 指定 controller 仓库）"
-
-    read_args
-    ARGS+=(-drive "file=$dir/disk.qcow2,format=qcow2,if=virtio")
-
-    # 9p：把宿主的 controller 仓库挂进虚机。
-    #
-    # security_model=none 表示不做 uid/gid 映射——宿主的文件权限原样带过去。
-    # 开发场景够用，而且 macOS 的 uid 和虚机里的 root/1000 对不上时不会报错。
-    # 生产不要这么用。
-    ARGS+=(-virtfs "local,path=$shared,mount_tag=reinas,security_model=none,multidevs=remap")
-
-    # 双向串口：能读日志，也能敲命令（gui 的 -serial file: 是单向的，
-    # monitor 的 sendkey 只作用于 VGA tty，对串口登录提示无效）。
-    mkdir -p "$dir/logs"
-    local sock="$dir/logs/console.sock"
-    rm -f "$sock"
-    ARGS+=(-chardev "socket,id=ser0,path=$sock,server=on,wait=off,logfile=$dir/logs/console.log,logappend=on")
-    ARGS+=(-serial "chardev:ser0")
-    ARGS+=(-display none)
-
-    log "开发模式"
-    log "  共享目录（宿主）: $shared"
-    log "  虚机挂载点:      /mnt/reinas"
-    log "  串口 socket:     $sock"
-    log "  控制台日志:      $dir/logs/console.log"
-    [ "$PANEL_PORT" != 0 ] && log "  面板:            http://127.0.0.1:${PANEL_PORT}"
-    log ""
-    log "虚机里第一次要装 bun（镜像本身不带）："
-    log "  curl -fsSL https://bun.sh/install | bash"
-    log "然后："
-    log "  mount -t 9p -o trans=virtio,version=9p2000.L reinas /mnt/reinas"
-    log "  cd /mnt/reinas && ~/.bun/bin/bun install && ~/.bun/bin/bun run dev"
-    log ""
-    log "往串口敲命令：printf '%s\\r' '命令' | nc -U -w 3 $sock"
-
-    exec "$bin" "${ARGS[@]}"
 }
 
 status() {
