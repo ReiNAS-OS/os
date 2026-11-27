@@ -80,26 +80,24 @@ fi
 #  5. 账号
 # ============================================================
 # 默认（生产形态）：
-#   - root 与非 root 特权账号一律锁定密码，禁止密码登录
+#   - root 锁定密码，禁止密码登录
 #   - SSH 只认公钥
 # 开发形态（./scripts/build.sh --root-password）：
 #   - root 设密码，SSH 放开 root 密码登录
-#   - reinas 应急账号仍然锁定
-#   - 由 /etc/reinas/root.conf 控制，见 docs/decisions.md D-007
+#   - 由 /etc/reinas/root.conf 控制，见 docs/decisions-account.md D-007
 #
 # ⚠️ 除开关外没有第二条设密码的路。默认镜像里没有任何已知口令。
+#
+# 镜像里**不预置任何普通用户**。出厂只有 root，第一个普通账号由面板的
+# 初始化流程创建（POST /api/v1/setup/user，走 useradd）。这样「有没有
+# 初始化过」的判断和「有没有可登录用户」是同一件事，不会出现预置账号
+# 让新机器看起来已经配好的情况。
 REINAS_ROOT_PASSWORD=""
 mkdir -p /etc/reinas
 if [ -s /etc/reinas/root.conf ]; then
     # 纯文本一行。用 read 不用 source：密码里含 $ ` " \ 也不会被展开执行。
     IFS= read -r REINAS_ROOT_PASSWORD < /etc/reinas/root.conf || true
 fi
-
-# 应急账号：在 wheel 组，供控制台与后续设密码使用。始终锁定密码。
-if ! id reinas >/dev/null 2>&1; then
-    useradd -m -G wheel -s /bin/bash reinas
-fi
-passwd -l reinas 2>/dev/null || true
 
 if [ -n "${REINAS_ROOT_PASSWORD}" ]; then
     echo "==== root 密码：已设置，SSH root 密码登录放开 ===="
@@ -128,10 +126,12 @@ EOF
     chmod 0644 /etc/ssh/sshd_config.d/20-reinas-root.conf \
         /etc/reinas/BUILD-HAS-ROOT-PASSWORD
 else
-    echo "==== 生产形态：所有账号锁定，SSH 仅公钥 ===="
+    echo "==== 生产形态：root 锁定，SSH 仅公钥 ===="
     # 锁定 root（禁止密码登录），但保留账号可用：
     #   - 物理控制台可用单步救援
     #   - 首次登录通过 SSH 公钥
+    #
+    # 这是镜像里唯一的账号。第一个普通用户由面板初始化流程创建。
     passwd -d root 2>/dev/null || true
     passwd -l root 2>/dev/null || true
 fi

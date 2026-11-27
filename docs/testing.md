@@ -49,7 +49,7 @@ Password:     123456
 - `root` 和 `reinas` 都是锁定密码
 - SSH 是 `PasswordAuthentication no`，且镜像里没有预置任何公钥
 
-结果是串口能看到登录提示，但没有可用的凭据。见 decisions.md D-007。
+结果是串口能看到登录提示，但没有可用的凭据。见 decisions-account.md D-007。
 
 ```bash
 sudo ./scripts/build.sh --root-password     # root / 123456
@@ -118,7 +118,7 @@ dd if=ReiNAS.x86_64-0.1.0-0.raw of=/tmp/target.img \
 | machine-id 生成 | `cat /etc/machine-id` | 非空，且**每台机器不同** |
 | root 锁定 | `passwd -S root` | `L`（locked） |
 | root 密码状态 | `passwd -S root` | 开密码构建 `P`；生产构建 `L` |
-| reinas 始终锁定 | `passwd -S reinas` | 恒为 `L` |
+| 没有预置普通用户 | `ls /home` | 空（第一个普通用户由面板初始化创建） |
 | 构建标记 | `ls /etc/reinas/BUILD-HAS-ROOT-PASSWORD` | 开密码构建存在；生产构建不存在 |
 | 登录提示 | 看 console | 显示 `Web console:
  https://<ip>:5090`（面板未实现时访问会失败，正常） |

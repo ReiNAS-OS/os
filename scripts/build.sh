@@ -101,7 +101,7 @@ build_rpm() {
 }
 
 # 生成 root 密码配置，供 kiwi 的 <file> 带进镜像。
-# 见 docs/decisions.md D-007。默认（ROOT_PASSWORD 为空）生成空文件，
+# 见 docs/decisions-account.md D-007。默认（ROOT_PASSWORD 为空）生成空文件，
 # config.sh 读到空值就不动账号，镜像与生产形态一致。
 #
 # 文件内容就是密码明文本身，一行，不带引号。config.sh 用 `read` 取，
