@@ -18,7 +18,7 @@
 # 为什么必须绕开 turbo：
 #   `turbo run dev` 会把任务放进自己的进程组，`bun --watch` 的文件监听在
 #   那一层之下不生效——实测改 .tsx 后 bundle 不重新编译。虚机里要直接跑
-#   `bun --watch src/main.ts serve --dev`。
+#   `bun src/main.ts serve`。
 #
 # 为什么必须用 Homebrew 的 rsync：
 #   macOS 自带的 /usr/bin/rsync 是 openrsync（协议 2.6.9），不认
@@ -69,7 +69,7 @@ dev() {
     log "  curl -fsSL https://bun.sh/install | bash"
     log "然后（⚠️ 不要用 bun run dev / turbo run dev，理由见下）："
     log "  cd $DEV_REMOTE_DIR && bun install"
-    log "  cd $DEV_REMOTE_DIR/apps/cli && bun --watch src/main.ts serve --dev"
+    log "  cd $DEV_REMOTE_DIR/apps/cli && bun src/main.ts serve"
     log ""
     log "为什么绕开 turbo：turbo 会把任务放进自己的进程组，bun --watch 的"
     log "文件监听在那层之下不生效——实测改 .tsx 后 bundle 不重新编译。"
@@ -228,7 +228,7 @@ macOS 自带的是 openrsync，不认 --chmod=D755。brew install rsync"
             systemctl reset-failed reinas-dev.service >/dev/null 2>&1
             systemd-run --unit=reinas-dev --collect \\
                 --working-directory=$DEV_REMOTE_DIR/apps/cli \\
-                /usr/local/bin/bun src/main.ts serve --dev
+                /usr/local/bin/bun src/main.ts serve
         " < /dev/null > /dev/null 2>&1
     }
 
